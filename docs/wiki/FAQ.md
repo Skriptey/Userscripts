@@ -131,6 +131,16 @@ album page.
 ZIPs are built in the tab, so peak memory is ~2× the **Max ZIP size**. Lower it,
 or turn **ZIP bundling** off to stream each file straight to disk.
 
+**Q. The "Zipping…" step takes a while — is it stuck?**
+Building a large ZIP happens in the browser tab, so it's the slow part of a big
+album (the downloads already finished). The current-file bar shows a moving
+**sheen** while it's actively packing — so a live build looks different from a
+frozen one — plus a **percentage** when JSZip reports one. If a ZIP fails to build
+(usually the tab hitting a memory limit), it now shows **❌ `<name>: <reason>`** on
+the panel and a `[BunkrDL] ZIP build failed` line in the console, instead of
+stalling silently. To skip the wait on huge albums, lower **Max ZIP size** or turn
+**ZIP bundling** off (saves each file individually, no zipping).
+
 **Q. How are the ZIPs named?**
 `<AlbumName>_1.zip`, `<AlbumName>_2.zip`, … from the album's title (e.g.
 `TravelVids.xyz_1.zip`).

@@ -71,6 +71,11 @@ handling_ setting:
 
 Prefer no ZIPs? Turn **ZIP bundling** off to save each file individually.
 
+Building a large ZIP runs in the tab, so it's the slow part of a big album; the
+progress panel shows a **percentage** plus a moving **sheen** while it packs (so a
+live build is distinct from a frozen one), and a ZIP that fails to build is shown
+as **❌** on the panel rather than stalling silently.
+
 Filenames are decoded for readability (Bunkr uses `+`/`%20` for spaces, so
 `My+File%20(1).mp4` becomes `My File (1).mp4`).
 

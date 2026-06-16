@@ -220,6 +220,14 @@ This script ships verbatim (no build step) so you can read every line.
   a `[BunkrDL] … failed: …` line) — include that message when reporting an issue.
   API calls now time out (≈45 s) instead of hanging indefinitely at "0 B".
 - **Tab runs out of memory.** Lower _Max ZIP size_ or turn off _ZIP bundling_.
+- **The "Zipping…" step takes a while / looks stuck.** Building a large ZIP runs
+  in the browser tab, so it's the slow part of a big album (the downloads have
+  already finished). The current-file bar shows a moving **sheen** while it's
+  actively packing — an active build looks different from a frozen one — plus a
+  percentage when JSZip reports one. A ZIP that fails to build (usually a memory
+  limit) now shows **`❌ <name>: <reason>`** on the panel and `[BunkrDL] ZIP build
+failed` in the console, instead of stalling. To skip the wait, lower _Max ZIP
+  size_ or turn _ZIP bundling_ off.
 - **Browser blocks multiple downloads.** With ZIP bundling off you get one
   download per file; allow multiple downloads for the site when prompted.
 

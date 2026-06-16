@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.5.2
+// @version      1.5.3
 // @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums and balbums.st listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -132,7 +132,11 @@
 //  (truncated files retry), then bundled into ZIPs capped at a configurable size
 //  (default 1 GiB), named "<AlbumName>_1.zip", "<AlbumName>_2.zip", … Completed
 //  files are remembered so an interrupted album resumes, and filenames are
-//  decoded (Bunkr uses "+" and %20 for spaces).
+//  decoded (Bunkr uses "+" and %20 for spaces). The progress panel shows ZIP-build
+//  progress — a percentage plus a compositor "sheen" that keeps moving while JSZip
+//  packs, so a live build is visually distinct from a frozen one — and surfaces a
+//  ZIP that fails to build (e.g. the tab hitting a memory limit) as "❌ <name>: …"
+//  rather than letting it stall silently.
 //
 //  @connect set — the two FIXED hosts, resolver dl.bunkr.cr and signer
 //  glb-apisign.cdn.cr, are listed EXPLICITLY (belt-and-braces for any manager
@@ -942,12 +946,22 @@
         if (!zip || zipCount === 0) return;
         const name = `${albumName}_${zipPart}.zip`;
         ui.log(`Zipping ${name} (${formatBytes(zipBytes)})…`);
-        ui.setCurrent(`Building ${name}…`, 0, 0);
-        const blob = await zip.generateAsync(
-          { type: 'blob', compression: settings.compression, streamFiles: true },
-          (meta) =>
-            ui.setCurrent(`Building ${name} — ${Math.round(meta.percent)}%`, meta.percent, 0),
-        );
+        ui.setZipping(`Building ${name}`, 0);
+        let blob;
+        try {
+          blob = await zip.generateAsync(
+            { type: 'blob', compression: settings.compression, streamFiles: true },
+            (meta) => ui.setZipping(`Building ${name}`, meta.percent),
+          );
+        } catch (err) {
+          // A ZIP that fails to build (most likely the tab hitting a memory limit
+          // on a very large archive) must surface on the panel itself, not vanish
+          // into the scrolling log — otherwise it looks like a frozen "Building…".
+          console.error('[BunkrDL] ZIP build failed:', err);
+          ui.zipFailed(name, (err && err.message) || String(err));
+          throw err; // handled by the caller (packChain .catch / final-flush try)
+        }
+        ui.setZipping(`Saving ${name}`, 100);
         await saveBlob(blob, name);
         ui.log(`Saved ${name}`);
         const saved = pendingSlugs;
@@ -1256,10 +1270,32 @@
         setBar(obar, total ? (done / total) * 100 : 0);
       },
       setCurrent(name, loaded, total) {
+        cbar.classList.remove('bdl-zipping', 'bdl-error');
         current.textContent = total
           ? `${name} — ${formatBytes(loaded)} / ${formatBytes(total)}`
           : `${name}`;
-        setBar(cbar, total ? (loaded / total) * 100 : loaded /* percent passthrough for zipping */);
+        setBar(cbar, total ? (loaded / total) * 100 : loaded);
+      },
+      /**
+       * Drive the current-file bar for the ZIP step. JSZip's `percent` can be
+       * coarse or stall during final blob assembly, so we show the determinate
+       * percent when we have it AND mark the bar `.bdl-zipping`, which runs a
+       * compositor-driven "sheen" that keeps moving even while the main thread is
+       * busy packing — so an active zip looks different from a frozen or errored one.
+       */
+      setZipping(label, percent) {
+        const known = Number.isFinite(percent) && percent >= 0;
+        current.textContent = known ? `${label} — ${Math.round(percent)}%` : `${label}…`;
+        cbar.classList.remove('bdl-error');
+        cbar.classList.add('bdl-zipping');
+        setBar(cbar, known ? percent : 8);
+      },
+      /** Show a ZIP build failure on the panel itself (red bar + reason). */
+      zipFailed(label, msg) {
+        current.textContent = `❌ ${label}: ${msg}`;
+        cbar.classList.remove('bdl-zipping');
+        cbar.classList.add('bdl-error');
+        setBar(cbar, 100);
       },
       log(msg) {
         const line = h('div', {}, msg);
@@ -1268,6 +1304,7 @@
       },
       onCancel: (cb) => (cancelCb = cb),
       finish(msg) {
+        cbar.classList.remove('bdl-zipping', 'bdl-error');
         overall.textContent = msg;
         current.textContent = '';
         setBar(obar, 100);
@@ -1323,8 +1360,17 @@
     .bdl-title { font-weight:600; margin-bottom:8px; font-size:14px; }
     .bdl-line { margin:4px 0; word-break:break-word; }
     .bdl-muted { color:#a8a4ad; }
-    .bdl-bar { height:6px; background:#332f3a; border-radius:99px; overflow:hidden; margin:3px 0 8px; }
+    .bdl-bar { position:relative; height:6px; background:#332f3a; border-radius:99px; overflow:hidden; margin:3px 0 8px; }
     .bdl-bar i { display:block; height:100%; width:0; background:#6750a4; transition:width .15s; }
+    /* Zipping: a light "sheen" sweeps the bar via a compositor transform, so it
+       keeps moving even while JSZip packs on the main thread — a live zip looks
+       different from a frozen one. The fill (i) still shows the % when known. */
+    .bdl-bar.bdl-zipping::after { content:''; position:absolute; inset:0;
+      background:linear-gradient(90deg, transparent, rgba(255,255,255,.28), transparent);
+      transform:translateX(-100%); animation:bdl-sheen 1.15s linear infinite; }
+    .bdl-bar.bdl-error i { background:#e0606a; }
+    @keyframes bdl-sheen { to { transform:translateX(100%); } }
+    @media (prefers-reduced-motion: reduce) { .bdl-bar.bdl-zipping::after { animation:none; } }
     .bdl-log { max-height:120px; overflow:auto; font-size:12px; color:#a8a4ad;
       background:#16151a; border-radius:8px; padding:6px 8px; margin:6px 0; }
     .bdl-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:4px; }
