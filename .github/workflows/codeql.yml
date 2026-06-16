@@ -1,0 +1,55 @@
+name: CodeQL
+
+# Code scanning for a hand-written JavaScript userscripts collection.
+# Advanced setup (this file) is used instead of default setup so we control
+# triggers, schedule, and query suite, and pin the CodeQL Action major tag.
+# build-mode: none — the *.user.js files ship as-is, there is nothing to compile.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly drift scan (Mondays 06:17 UTC) so newly published CodeQL
+    # queries catch issues even when no code changes land.
+    - cron: '17 6 * * 1'
+
+# Cancel superseded runs on the same ref to save Actions minutes.
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (JavaScript/TypeScript)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to the code-scanning API
+      actions: read # CodeQL Action looks up the workflow run
+      contents: read # actions/checkout
+
+    env:
+      # The JS extractor keys on file extension; `.user.js` is a compound
+      # extension it doesn't recognise by default. Map it to JavaScript so the
+      # userscripts under scripts/ are actually scanned (not just tools/).
+      LGTM_INDEX_FILETYPES: '.user.js:js'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          # security-extended adds higher-signal security queries on top of
+          # the default suite. Swap to security-and-quality to also surface
+          # maintainability/style issues.
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:javascript-typescript'

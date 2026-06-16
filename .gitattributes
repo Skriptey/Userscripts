@@ -1,0 +1,20 @@
+# Normalize line endings across platforms — keep checkouts consistent.
+* text=auto eol=lf
+
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+
+# Treat common binaries as binary (no EOL munging).
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

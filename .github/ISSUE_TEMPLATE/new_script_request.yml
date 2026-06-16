@@ -1,0 +1,33 @@
+name: ✨ New script request
+description: Suggest a new userscript for the collection.
+title: '[Request] <what it should do>'
+labels: ['enhancement', 'new script']
+body:
+  - type: input
+    id: site
+    attributes:
+      label: Target site(s)
+      description: Which site(s) should the script run on?
+      placeholder: https://example.com/*
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What should it do?
+      description: Describe the behaviour you'd like.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it useful?
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing scripts and issues and this doesn't already exist.
+          required: true

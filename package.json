@@ -1,0 +1,36 @@
+{
+  "name": "skriptey-userscripts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A collection of browser userscripts by Skriptey.",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://skriptey.github.io/Userscripts/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Skriptey/Userscripts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Skriptey/Userscripts/issues"
+  },
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "validate": "node tools/validate-metadata.mjs",
+    "build:index": "node tools/build-index.mjs",
+    "check": "npm run lint && npm run format:check && npm run validate",
+    "build": "npm run validate && npm run build:index"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4"
+  }
+}

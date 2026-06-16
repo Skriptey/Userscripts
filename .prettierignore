@@ -1,0 +1,6 @@
+# Generated / vendored / verbatim — don't reformat.
+site/
+node_modules/
+package-lock.json
+LICENSE
+CODE_OF_CONDUCT.md

@@ -1,0 +1,62 @@
+# ── Dependencies ─────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.*
+
+# ── Generated GitHub Pages output ────────────────────────────
+# site/ is rebuilt from scripts/ by tools/build-index.mjs in CI, published
+# as a Pages artifact, and never committed.
+/site/
+
+# ── Wiki working copy ────────────────────────────────────────
+# docs/wiki/ holds the wiki SOURCE (committed). A local clone of the separate
+# wiki repo (for publishing — see docs/README.md) must not be tracked here.
+/Userscripts.wiki/
+
+# ── Logs & caches ────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.eslintcache
+.cache/
+*.tsbuildinfo
+
+# ── Secrets & local env — never commit ───────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+auth_creds*
+secrets.*
+
+# ── Security scan artifacts (when run locally) ───────────────
+*.sarif
+
+# ── Claude Code (keep shared CLAUDE.md and settings.json) ────
+.claude/settings.local.json
+.claude/*.local.json
+
+# ── OS cruft ─────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── Editors / IDEs ───────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json

@@ -1,0 +1,63 @@
+name: 🐞 Bug report
+description: A userscript isn't working as expected.
+title: '[Bug] <script>: <summary>'
+labels: ['bug']
+body:
+  - type: input
+    id: script
+    attributes:
+      label: Which userscript?
+      description: Folder name under scripts/, e.g. example-hello-world.
+      placeholder: example-hello-world
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Script version
+      description: The @version shown in your userscript manager.
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: manager
+    attributes:
+      label: Userscript manager
+      options:
+        - Tampermonkey
+        - Violentmonkey
+        - Greasemonkey
+        - Other (note below)
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser & OS
+      placeholder: Firefox 140 on macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to …
+        2. …
+        3. See the problem
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors (optional)
+      description: Paste anything relevant from the browser devtools console.
+      render: text
+    validations:
+      required: false

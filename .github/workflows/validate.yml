@@ -1,0 +1,48 @@
+name: Lint & validate
+
+# PR gate: ESLint + Prettier pass, every userscript has a complete metadata
+# block, and the install index builds.
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tools/**'
+      - 'eslint.config.js'
+      - '.prettier*'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/validate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'tools/**'
+      - 'eslint.config.js'
+      - '.prettier*'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/validate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint & validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: Prettier (check)
+        run: npm run format:check
+      - name: Validate userscript metadata
+        run: node tools/validate-metadata.mjs
+      - name: Ensure install index builds
+        run: node tools/build-index.mjs
