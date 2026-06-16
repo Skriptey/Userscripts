@@ -112,7 +112,10 @@ Bunkr probably changed the album page. Reload first. If it persists, the embedde
 **Q. Downloads fail, stall, or stop partway.**
 Usually Bunkr rate limiting — BunkrDL backs off and retries automatically.
 Raise **Delay between files** in settings. If _every_ file fails, Bunkr likely
-changed its download API; check the maintenance notes.
+changed its download API; check the maintenance notes. The exact failure reason
+now shows **in the progress panel** (a red **❌ message**) and in the **browser
+console** (`F12` → Console → a `[BunkrDL] … failed: …` line) — include it when
+reporting. Requests also time out (≈45 s) instead of hanging forever at "0 B".
 
 **Q. Which Bunkr domains are supported?**
 All of them — any `bunkr.<tld>` (and the double-r legacy `bunkrr.<tld>`), on any

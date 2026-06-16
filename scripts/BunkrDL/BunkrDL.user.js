@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.5.1
+// @version      1.5.2
 // @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums and balbums.st listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -58,6 +58,8 @@
 // @connect      bunkr.is
 // @connect      bunkr.to
 // @connect      cdn.cr
+// @connect      dl.bunkr.cr
+// @connect      glb-apisign.cdn.cr
 // @require      https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @homepageURL  https://github.com/Skriptey/Userscripts/tree/main/scripts/BunkrDL
 // @supportURL   https://github.com/Skriptey/Userscripts/issues
@@ -132,13 +134,17 @@
 //  files are remembered so an interrupted album resumes, and filenames are
 //  decoded (Bunkr uses "+" and %20 for spaces).
 //
-//  @connect set — the resolver host is dl.bunkr.<tld> (a subdomain of the
-//  already-listed bunkr.<tld>), the signer glb-apisign.cdn.cr and the rotating
-//  media host *.cdn.cr are subdomains of the already-listed cdn.cr, album HTML
-//  is on the various bunkr TLDs, and balbums.st serves its cards. If Bunkr moves
-//  media to a brand-new CDN domain, downloads will fail and the progress log
-//  prints the blocked host so it can be added here (and reported). See
-//  scripts/BunkrDL/README.md → "Security & permissions".
+//  @connect set — the two FIXED hosts, resolver dl.bunkr.cr and signer
+//  glb-apisign.cdn.cr, are listed EXPLICITLY (belt-and-braces for any manager
+//  that doesn't match @connect subdomains); they're also covered as subdomains of
+//  the already-listed bunkr.<tld> / cdn.cr. The media host is a ROTATING *.cdn.cr
+//  subdomain that can't be enumerated, so it always relies on the cdn.cr entry +
+//  subdomain matching (Tampermonkey, Violentmonkey and Greasemonkey all do this).
+//  Album HTML is on the various bunkr TLDs, and balbums.st serves its cards. If
+//  Bunkr moves media to a brand-new CDN domain, downloads fail and the failure is
+//  surfaced — a red "❌ <message>" in the progress panel and a "[BunkrDL] … failed"
+//  console line naming the blocked host — so it can be added here (and reported).
+//  See scripts/BunkrDL/README.md → "Security & permissions".
 //
 //  TARGETING — Bunkr spans ~20 rotating TLDs, which a @match pattern can't
 //  wildcard, so the @include regex is the real Bunkr matcher (every TLD +
@@ -584,6 +590,12 @@
   /** Promise wrapper around GM_xmlhttpRequest. Resolves for ANY HTTP status
    *  (caller inspects .status); rejects only on network/abort/timeout. */
   function gmRequest(opts) {
+    // API calls (resolve / sign / page fetch) get a 45s ceiling so a hung
+    // connection surfaces as a "timeout" error instead of an indefinite
+    // "0 B" stall; large blob downloads (files) are left untimed. An explicit
+    // opts.timeout always wins.
+    let timeout = opts.timeout;
+    if (timeout == null) timeout = opts.responseType === 'blob' ? 0 : 45000;
     return new Promise((resolve, reject) => {
       const handle = GM_xmlhttpRequest({
         method: opts.method || 'GET',
@@ -591,7 +603,7 @@
         headers: opts.headers || {},
         data: opts.data,
         responseType: opts.responseType, // 'blob' for files; undefined (text) for the API
-        timeout: opts.timeout || 0,
+        timeout,
         onprogress: opts.onprogress,
         onload: (res) => {
           activeRequest = null;
@@ -1604,7 +1616,8 @@
           const { id, host, name } = await resolveItemId(href);
           await downloadSingleFile(id, host, name || decodeFileName(displayName));
         } catch (err) {
-          notify('BunkrDL', `Download failed: ${err.message}`);
+          console.error('[BunkrDL] per-item download failed:', err);
+          notify('BunkrDL', `Download failed: ${(err && err.message) || err}`);
         } finally {
           btn.disabled = false;
           btn.textContent = original;
@@ -1701,8 +1714,13 @@
       return;
     }
     jobRunning = true;
-    const ui = createProgressUI();
+    // Create the progress UI INSIDE the try so the finally below always clears
+    // jobRunning even if createProgressUI() throws (e.g. document.body missing) —
+    // otherwise a throw here would leak jobRunning=true and soft-lock every future
+    // download behind the "already running" guard. (Matches the album-job path.)
+    let ui;
     try {
+      ui = createProgressUI();
       ui.onCancel(() => {
         if (activeRequest && activeRequest.abort) activeRequest.abort();
       });
@@ -1727,6 +1745,34 @@
       ui.setOverall(1, 1, blob.size, blob.size);
       ui.finish(`Saved ${name || 'file'} (${formatBytes(blob.size)}).`);
       notify('BunkrDL', `Saved ${name || 'file'}.`);
+    } catch (err) {
+      const msg = (err && err.message) || String(err);
+      if (msg === 'aborted') {
+        // The user clicked Cancel — gmRequest's onabort rejects with 'aborted'.
+        // That's a deliberate action, not a failure, so report it neutrally (and
+        // don't console.error it). Mirrors the album job's "Cancelled" wording.
+        console.info('[BunkrDL] single-file download cancelled by user.');
+        try {
+          ui.setTitle('Cancelled');
+          ui.finish('Download cancelled.');
+        } catch {
+          /* UI already torn down / never created */
+        }
+        notify('BunkrDL', 'Download cancelled.');
+      } else {
+        // Surface the failure in the progress panel AND the console. Previously a
+        // failed resolve/sign/download threw with no catch here, leaving the panel
+        // frozen at "0/1 · 0 B" while only a fleeting GM notification carried the
+        // reason — so a plain error looked like an indefinite hang.
+        console.error('[BunkrDL] single-file download failed:', err);
+        try {
+          ui.setTitle(`❌ ${msg}`);
+          ui.finish(`Download failed: ${msg}`);
+        } catch {
+          /* UI already torn down / never created — the notification carries it */
+        }
+        notify('BunkrDL', `Download failed: ${msg}`);
+      }
     } finally {
       jobRunning = false;
     }

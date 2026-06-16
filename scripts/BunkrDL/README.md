@@ -180,15 +180,19 @@ This script ships verbatim (no build step) so you can read every line.
   per-file resolver on **`dl.bunkr.<tld>`** (a subdomain of the album's
   `bunkr.<tld>`), the signer **`glb-apisign.cdn.cr`** and the rotating media host
   **`*.cdn.cr`** (both subdomains of `cdn.cr`), album/file HTML on the various
-  Bunkr TLDs, and `balbums.st` for its cards. Because userscript `@connect`
-  matches subdomains, the existing `bunkr.<tld>` and `cdn.cr` entries already
-  cover all of these — **no new entries were needed**, and there is **no
-  `@connect *`**. The resolver host is read from the file page's download button
-  and **allowlisted to `dl.bunkr.<tld>`** before the resolve POST (which echoes
-  the file id), so a tampered page can't redirect it elsewhere; the media host is
-  likewise checked to be `*.cdn.cr`. If Bunkr ever moves media to a brand-new CDN
-  _domain_, downloads fail and the progress log names the blocked host so it can
-  be added here (and reported upstream).
+  Bunkr TLDs, and `balbums.st` for its cards. All major managers (Tampermonkey,
+  Violentmonkey, Greasemonkey) match `@connect` **subdomains**, so the
+  `bunkr.<tld>` and `cdn.cr` entries already cover these — but as belt-and-braces
+  for any stricter manager, the two **fixed** hosts **`dl.bunkr.cr`** and
+  **`glb-apisign.cdn.cr`** are now **also listed explicitly**. The media host is a
+  **rotating** `*.cdn.cr` subdomain that can't be enumerated, so it always relies
+  on the `cdn.cr` entry + subdomain matching. There is **no `@connect *`**. The
+  resolver host is read from the file page's download button and **allowlisted to
+  `dl.bunkr.<tld>`** before the resolve POST (which echoes the file id), so a
+  tampered page can't redirect it elsewhere; the media host is likewise checked to
+  be `*.cdn.cr`. If Bunkr ever moves media to a brand-new CDN _domain_, downloads
+  fail and the failure is surfaced (see _Troubleshooting_) naming the blocked host
+  so it can be added here (and reported upstream).
 - **No page data is exfiltrated.** Requests go only to Bunkr's per-file resolver,
   the CDN signer, the resolved CDN URLs, and (for balbums cards) the linked album
   page. The album title is used only for ZIP filenames and is HTML-unescaped via
@@ -211,7 +215,10 @@ This script ships verbatim (no build step) so you can read every line.
   _How it works_).
 - **Downloads fail / stop.** Usually Bunkr rate limiting (BunkrDL backs off and
   retries) or a changed download API (see _How it works_). Try increasing
-  _Delay between files_.
+  _Delay between files_. The exact reason is shown **in the progress panel** (a
+  red **`❌ <message>`**) and logged to the **browser console** (`F12` → Console →
+  a `[BunkrDL] … failed: …` line) — include that message when reporting an issue.
+  API calls now time out (≈45 s) instead of hanging indefinitely at "0 B".
 - **Tab runs out of memory.** Lower _Max ZIP size_ or turn off _ZIP bundling_.
 - **Browser blocks multiple downloads.** With ZIP bundling off you get one
   download per file; allow multiple downloads for the site when prompted.
