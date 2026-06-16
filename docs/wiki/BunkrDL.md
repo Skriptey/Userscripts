@@ -109,6 +109,10 @@ page) → **BunkrDL** commands. Settings persist across sessions.
 | Clear resume data         | —          | Forget saved progress for all albums.                    |
 | Reset to defaults         | —          | Restore all settings.                                    |
 
+The numeric/list items open a prompt; the rest are **one-click toggles** (a single
+click flips and saves them, with a toast). The menu's "(current: …)" label refreshes
+the next time you open the menu — no page reload needed.
+
 ## Rate limiting
 
 By default downloads run **one at a time** with a jittered delay between files,

@@ -141,6 +141,13 @@ the panel and a `[BunkrDL] ZIP build failed` line in the console, instead of
 stalling silently. To skip the wait on huge albums, lower **Max ZIP size** or turn
 **ZIP bundling** off (saves each file individually, no zipping).
 
+**Q. I clicked a toggle (ZIP bundling, Compression, Pre-flight, …) and nothing seemed to happen.**
+Those are **one-click toggles**: a single click flips and saves the setting straight
+away (you'll get a brief "BunkrDL: …" toast), and it takes effect immediately. Only
+the menu's "(current: …)" **label** can't repaint while the menu is open — it
+refreshes the next time you open the menu. (The numeric/list settings open a prompt
+instead, which is why they feel more obviously interactive.)
+
 **Q. How are the ZIPs named?**
 `<AlbumName>_1.zip`, `<AlbumName>_2.zip`, … from the album's title (e.g.
 `TravelVids.xyz_1.zip`).

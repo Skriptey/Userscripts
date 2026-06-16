@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.5.3
+// @version      1.5.4
 // @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums and balbums.st listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -30,6 +30,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // @grant        GM_notification
 // @grant        GM_addStyle
 // @grant        GM_download
@@ -162,7 +163,10 @@
 //  max ZIP size, request delay/jitter, retries, parallel downloads, oversize-file
 //  behaviour, ZIP vs individual mode, compression, pre-flight confirmation, size
 //  verification, resume, and GM_download saving; plus "Clear resume data".
-//  Settings persist via GM storage.
+//  Settings persist via GM storage and apply immediately; toggle/cycle items
+//  change on a single click, and the menu re-registers itself so each
+//  "(current: …)" label refreshes when you reopen the menu (registerMenu /
+//  refreshMenu — userscript managers can't repaint a menu label in place).
 //
 //  This script ships verbatim (no build step). Keep the comments accurate when
 //  you edit it — see the repo standing task on annotations.
@@ -1828,44 +1832,84 @@
   //  Section 9 — settings menu (userscript-manager command palette)
   // -------------------------------------------------------------------------
 
+  // Userscript managers can't repaint a menu command's label in place, and the
+  // menu is built once per page load — so a toggle/cycle setting changes value
+  // silently and its "(current: …)" label looks stale until a reload (the prompt-
+  // based items only *feel* different because the prompt is visible feedback). We
+  // fix that by tracking every command's id and, after any change, tearing the
+  // whole menu down (GM_unregisterMenuCommand) and rebuilding it — so reopening the
+  // menu shows every label at its new value, no reload. On a manager without
+  // GM_unregisterMenuCommand we skip the rebuild (labels then need a reload, as
+  // before) rather than duplicating commands.
+  let menuCommandIds = [];
+
+  function refreshMenu() {
+    // Rebuild only if we can first REMOVE the current commands — otherwise a
+    // rebuild would stack duplicates. That needs GM_unregisterMenuCommand AND a
+    // usable id for every command (a few off-spec managers return no id from
+    // GM_registerMenuCommand; you can't remove what you can't reference). In either
+    // gap, leave the menu as-is — labels then need a reload (the pre-1.5.4
+    // behaviour) — rather than duplicate entries.
+    if (typeof GM_unregisterMenuCommand !== 'function') return;
+    if (menuCommandIds.some((id) => id == null)) return;
+    for (const id of menuCommandIds) {
+      try {
+        GM_unregisterMenuCommand(id);
+      } catch {
+        /* already gone */
+      }
+    }
+    menuCommandIds = [];
+    registerMenu();
+  }
+
   function registerMenu() {
+    // Track each command's id so refreshMenu() can remove it before rebuilding.
+    const add = (label, fn) => menuCommandIds.push(GM_registerMenuCommand(label, fn));
+    // Notify, then rebuild the menu so every label reflects the new value on reopen.
+    const changed = (msg) => {
+      if (msg) notify('BunkrDL', msg);
+      refreshMenu();
+    };
+
     const num = (label, key, unit) => {
-      GM_registerMenuCommand(`${label} (current: ${settings[key]}${unit || ''})`, () => {
+      add(`${label} (current: ${settings[key]}${unit || ''})`, () => {
         const v = window.prompt(`${label}:`, String(settings[key]));
         if (v == null) return;
         const n = Number(v);
         if (!Number.isFinite(n) || n < 0)
           return notify('BunkrDL', 'Please enter a non-negative number.');
         saveSetting(key, n);
-        notify('BunkrDL', `${label} set to ${n}${unit || ''}. Reopen the menu to see it.`);
+        changed(`${label} set to ${n}${unit || ''}.`);
       });
     };
     const toggle = (label, key, onText, offText) => {
-      GM_registerMenuCommand(`${label} (current: ${settings[key] ? 'on' : 'off'})`, () => {
+      add(`${label} (current: ${settings[key] ? 'on' : 'off'})`, () => {
         saveSetting(key, !settings[key]);
-        notify('BunkrDL', `${label}: ${settings[key] ? onText || 'on' : offText || 'off'}.`);
+        changed(`${label}: ${settings[key] ? onText || 'on' : offText || 'off'}.`);
       });
     };
+
     num('Max ZIP size', 'maxZipMB', ' MiB');
     num('Delay between files', 'delayMs', ' ms');
     num('Delay jitter', 'jitterMs', ' ms');
     num('Max retries per file', 'maxRetries', '');
     num('Parallel downloads', 'concurrency', '');
 
-    GM_registerMenuCommand(`Oversize file handling (current: ${settings.oversize})`, () => {
+    add(`Oversize file handling (current: ${settings.oversize})`, () => {
       const v = window.prompt('Oversize handling — "ask", "extend", or "skip":', settings.oversize);
-      if (v && ['ask', 'extend', 'skip'].includes(v.trim())) saveSetting('oversize', v.trim());
+      if (v && ['ask', 'extend', 'skip'].includes(v.trim())) {
+        saveSetting('oversize', v.trim());
+        changed(`Oversize handling set to ${settings.oversize}.`);
+      }
     });
-    GM_registerMenuCommand(`ZIP bundling (current: ${settings.zip ? 'on' : 'off'})`, () => {
+    add(`ZIP bundling (current: ${settings.zip ? 'on' : 'off'})`, () => {
       saveSetting('zip', !settings.zip);
-      notify(
-        'BunkrDL',
-        `ZIP bundling ${settings.zip ? 'enabled' : 'disabled (files saved individually)'}.`,
-      );
+      changed(`ZIP bundling ${settings.zip ? 'enabled' : 'disabled (files saved individually)'}.`);
     });
-    GM_registerMenuCommand(`Compression (current: ${settings.compression})`, () => {
+    add(`Compression (current: ${settings.compression})`, () => {
       saveSetting('compression', settings.compression === 'STORE' ? 'DEFLATE' : 'STORE');
-      notify('BunkrDL', `Compression set to ${settings.compression}.`);
+      changed(`Compression set to ${settings.compression}.`);
     });
     toggle('Pre-flight confirmation', 'confirm');
     toggle('Verify file sizes', 'verifySize');
@@ -1876,13 +1920,13 @@
       'on (manager handles saving)',
       'off (browser <a> download)',
     );
-    GM_registerMenuCommand('Clear resume data (all albums)', () => {
+    add('Clear resume data (all albums)', () => {
       const n = clearAllResume();
       notify('BunkrDL', `Cleared resume data for ${n} album(s).`);
     });
-    GM_registerMenuCommand('Reset BunkrDL settings to defaults', () => {
+    add('Reset BunkrDL settings to defaults', () => {
       for (const k of Object.keys(DEFAULTS)) saveSetting(k, DEFAULTS[k]);
-      notify('BunkrDL', 'Settings reset to defaults.');
+      changed('Settings reset to defaults.');
     });
   }
 

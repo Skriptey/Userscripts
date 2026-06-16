@@ -116,6 +116,13 @@ manager's storage.
 > _Parallel downloads_) on low-RAM devices, or turn ZIP bundling **off** to stream
 > files straight to disk for very large albums.
 
+**Changing a setting:** the numeric/list items (Max ZIP size, delays, retries,
+parallel downloads, Oversize handling) open a prompt; the rest (ZIP bundling,
+Compression, Pre-flight confirmation, Verify file sizes, Resume support, Save via
+GM_download) are **one-click toggles** — a single click flips and saves them
+immediately, with a confirming toast. Either way the menu's "(current: …)" label
+refreshes the next time you open the menu (no page reload needed).
+
 ## How it works (for maintainers)
 
 Bunkr changes its anti-scraping often, so the moving parts are isolated and
