@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.4.0
-// @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, and cover-art download (static + animated/motion artwork) — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
+// @version       1.6.1
+// @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
 // @match         https://music.apple.com/*
@@ -25,6 +25,7 @@
 // @connect       mzstatic.com
 // @connect       itunes.apple.com
 // @connect       musicbrainz.org
+// @connect       api.credits.fm
 // @icon          https://music.apple.com/assets/favicon/favicon-180-f10a76334177ea08c0b3b35b0269fe16.png
 // @homepageURL   https://github.com/Skriptey/Userscripts/tree/main/scripts/ITAMenhancer
 // @supportURL    https://github.com/Skriptey/Userscripts/issues
@@ -112,6 +113,15 @@
 //         L/XL/Max resolution setting, then concatenate init + media segments to
 //         a playable .mp4 (no decrypt/transcode). "All" → a ZIP at L, or separate
 //         files at XL/Max (the 2160 videos are too large to ZIP in-page).
+//       • "Download Lyrics" (logged-in only — lyrics need the Music-User-Token): a
+//         dropdown of the tiers available (Word-by-Word / Line-by-Line / Static),
+//         parsed from Apple's syllable-lyrics/lyrics TTML into word-LRC / line-LRC /
+//         text; an album saves as a ZIP of "<disc> - <track> - <title>" files. The
+//         button is hidden when nothing is downloadable.
+//       • "Find ISWCs" (explicit click): looks up each track's ISWC from MusicBrainz
+//         (+ a credits.fm gap-fill), shows ranked candidates with a confidence/source,
+//         and a deep-link that pre-seeds a MusicBrainz edit. Human-confirmed — nothing
+//         is written automatically (a planned MB-side companion enhances the seeding).
 //       • A details panel (formats, barcode, metadata, a track table with ISRCs
 //         and — for albums where a track's formats differ from the album-level
 //         set — a per-track "Formats" column, plus an optional "Work" column for
@@ -199,6 +209,10 @@
     autoBadges: true, // sub-option of showFormats: also inject badges inline near the title
     harmonyLookup: true, // FEATURE: "Harmony ↗" header/panel button (album cross-service lookup)
     coverArt: true, // FEATURE: "Download cover art" header/panel button (static + animated)
+    downloadLyrics: true, // FEATURE: "Download Lyrics" header/panel button (word-by-word / line / static; logged-in only)
+    iswcLookup: true, // FEATURE: "Find ISWCs" — per-track ISWC lookup + MusicBrainz seeding (on explicit click)
+    iswcSourceMb: true, // sub-option of iswcLookup: query MusicBrainz works (primary; gives the MB work id for seeding)
+    iswcSourceCreditsFm: true, // sub-option of iswcLookup: query credits.fm (gap-filler when MusicBrainz has no ISWC)
     motionRes: 'L', // animated cover-art resolution: 'L' (1080) | 'XL' (2160) | 'Max' (highest)
     locale: '', // optional Apple Music locale (e.g. "en-US"); '' = storefront default
   };
@@ -788,6 +802,7 @@
     const model = parseEntity(json, page.type);
     if (!model) throw new Error('unexpected API response shape');
     model.loggedIn = !!userToken;
+    model.country = page.country; // storefront — used to build the lyrics endpoints
     entityCache.set(page.id, model);
     return model;
   }
@@ -819,6 +834,7 @@
       model.tracks = trackData
         .filter((t) => t && t.attributes)
         .map((t) => ({
+          id: t.id, // catalog song id — needed to fetch this track's lyrics
           disc: t.attributes.discNumber || 1,
           track: t.attributes.trackNumber || 0,
           name: t.attributes.name || '',
@@ -826,6 +842,11 @@
           composer: t.attributes.composerName,
           isrc: t.attributes.isrc || '',
           releaseDate: t.attributes.releaseDate || '',
+          // Lyrics availability flags (gate the Download Lyrics tiers). Kept RAW —
+          // may be undefined if amp-api omits them for album tracks (verify
+          // in-browser; lyricsAvailability falls back to best-effort when absent).
+          hasLyrics: t.attributes.hasLyrics,
+          hasTimeSyncedLyrics: t.attributes.hasTimeSyncedLyrics,
           // Classical metadata: the parent work and the movement within it. Apple
           // populates these for classical releases (e.g. on Apple Music Classical);
           // empty for non-classical tracks. The panel surfaces workName as an
@@ -844,12 +865,15 @@
       // entity's own ISRC and formats.
       model.tracks = [
         {
+          id: data.id, // the song / music-video IS the entity; its id fetches its lyrics
           disc: 1,
           track: 1,
           name: a.name || '',
           artist: a.artistName || '',
           isrc: a.isrc || '',
           releaseDate: a.releaseDate || '',
+          hasLyrics: a.hasLyrics,
+          hasTimeSyncedLyrics: a.hasTimeSyncedLyrics,
           workName: a.workName || '',
           movementName: a.movementName || '',
           audioTraits: a.audioTraits || [],
@@ -858,6 +882,504 @@
       ];
     }
     return model;
+  }
+
+  // -------------------------------------------------------------------------
+  //  Section 4b — lyrics (synced + word-by-word) → LRC / text
+  // -------------------------------------------------------------------------
+  //
+  //  Apple serves lyrics as TTML on two song relationships, BOTH gated behind the
+  //  logged-in Music-User-Token (anonymous catalog returns "no related resources"):
+  //    • syllable-lyrics — WORD-BY-WORD (Apple Music "Sing"); each <p> line's <span>s
+  //      carry per-word begin/end times.
+  //    • lyrics          — LINE-SYNCED; each <p> line carries begin/end (no word spans).
+  //  We fetch the TTML, parse it to a small {lines:[{begin,end,text,words[]}]} model,
+  //  and emit enhanced ("A2") word-LRC, plain line-LRC, or timing-stripped text. An
+  //  album downloads as a ZIP of per-track files named "<disc> - <track> - <title>".
+  //  NB the endpoint needs a subscriber session, so it can't be reached when logged
+  //  out — verify the TTML shape in-browser when editing this section.
+
+  /** Parse a TTML timecode ("1:03.480" | "63.48" | "00:01:03.480" | "1003ms") → seconds. */
+  function ttmlTimeToSec(t) {
+    if (!t) return 0;
+    t = String(t).trim();
+    let m = t.match(/^([\d.]+)ms$/i);
+    if (m) return parseFloat(m[1]) / 1000;
+    m = t.match(/^([\d.]+)s$/i);
+    if (m) return parseFloat(m[1]);
+    const parts = t.split(':').map(Number);
+    if (parts.some((n) => Number.isNaN(n))) return 0;
+    return parts.reduce((acc, n) => acc * 60 + n, 0); // h:m:s | m:s | s
+  }
+
+  /** Format seconds as an LRC timestamp, e.g. secToLrc(63.48) → "[01:03.48]". */
+  function secToLrc(sec, open = '[', close = ']') {
+    sec = Math.max(0, sec || 0);
+    const mins = Math.floor(sec / 60);
+    const secs = (sec - mins * 60).toFixed(2);
+    return `${open}${String(mins).padStart(2, '0')}:${secs.padStart(5, '0')}${close}`;
+  }
+
+  /** Parse Apple lyrics TTML → { wordTimed, lines:[{begin,end,text,words:[…]}] } or
+   *  null. Uses DOMParser (XML); tolerant of the line- and word-timed variants. */
+  function parseLyricsTtml(ttml) {
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(ttml, 'application/xml');
+    } catch {
+      return null;
+    }
+    if (!doc || doc.getElementsByTagName('parsererror').length) return null;
+    const ps = [...doc.getElementsByTagName('p')];
+    if (!ps.length) return null;
+    let wordTimed = false;
+    const lines = ps.map((p) => {
+      const words = [...p.getElementsByTagName('span')]
+        .filter((sp) => sp.getAttribute('begin'))
+        .map((sp) => ({
+          begin: ttmlTimeToSec(sp.getAttribute('begin')),
+          end: ttmlTimeToSec(sp.getAttribute('end')),
+          text: sp.textContent || '',
+        }));
+      if (words.length) wordTimed = true;
+      return {
+        begin: ttmlTimeToSec(p.getAttribute('begin')),
+        end: ttmlTimeToSec(p.getAttribute('end')),
+        text: (p.textContent || '').replace(/\s+/g, ' ').trim(),
+        words,
+      };
+    });
+    return { wordTimed, lines };
+  }
+
+  /** Enhanced "A2" word-LRC: "[mm:ss.cc]<mm:ss.cc>word<mm:ss.cc>word…" per line.
+   *  Lines without per-word timing fall back to a line timestamp + text. */
+  function lyricsToWordLrc(parsed) {
+    return parsed.lines
+      .map((ln) =>
+        ln.words.length
+          ? secToLrc(ln.begin) + ln.words.map((w) => secToLrc(w.begin, '<', '>') + w.text).join('')
+          : secToLrc(ln.begin) + ln.text,
+      )
+      .join('\n');
+  }
+
+  /** Standard line-LRC: "[mm:ss.cc]line". */
+  function lyricsToLineLrc(parsed) {
+    return parsed.lines.map((ln) => secToLrc(ln.begin) + ln.text).join('\n');
+  }
+
+  /** Timing-stripped plain text. */
+  function lyricsToPlain(parsed) {
+    return parsed.lines.map((ln) => ln.text).join('\n');
+  }
+
+  /** GET a song's lyrics TTML for one kind ('syllable-lyrics' | 'lyrics'); null when
+   *  unavailable (logged out, or the song lacks that lyric type → amp-api 404). */
+  async function fetchLyricsTtml(country, songId, kind, devToken, userToken) {
+    const qs = settings.locale ? `?l=${encodeURIComponent(settings.locale)}` : '';
+    let json;
+    try {
+      json = await apiGet(
+        `/v1/catalog/${country}/songs/${songId}/${kind}${qs}`,
+        devToken,
+        userToken,
+      );
+    } catch {
+      return null;
+    }
+    const ttml = json && json.data && json.data[0] && json.data[0].attributes?.ttml;
+    return typeof ttml === 'string' && ttml ? ttml : null;
+  }
+
+  /** Resolve one track's lyrics in the requested tier, with fallback (word→line; either
+   *  endpoint feeds static). Returns { text, ext } or null. */
+  async function trackLyrics(country, songId, tier, devToken, userToken) {
+    const order = tier === 'word' ? ['syllable-lyrics', 'lyrics'] : ['lyrics', 'syllable-lyrics'];
+    let parsed = null;
+    for (const kind of order) {
+      const ttml = await fetchLyricsTtml(country, songId, kind, devToken, userToken);
+      if (ttml) {
+        parsed = parseLyricsTtml(ttml);
+        if (parsed && parsed.lines.length) break;
+      }
+    }
+    if (!parsed || !parsed.lines.length) return null;
+    if (tier === 'static') return { text: lyricsToPlain(parsed), ext: 'txt' };
+    if (tier === 'word' && parsed.wordTimed) return { text: lyricsToWordLrc(parsed), ext: 'lrc' };
+    return { text: lyricsToLineLrc(parsed), ext: 'lrc' }; // line, or word with only line timing
+  }
+
+  /** "<disc> - <NN> - <title>" filename stem (track number zero-padded). */
+  function lyricsFileStem(t) {
+    return `${t.disc || 1} - ${String(t.track || 0).padStart(2, '0')} - ${safeName(t.name) || 'Untitled'}`;
+  }
+
+  /** Which lyric tiers can be downloaded now? Requires login; gated by the per-track
+   *  hasLyrics/hasTimeSyncedLyrics flags. When those flags are absent (amp-api may omit
+   *  them on album tracks), fall back to offering all tiers — the download then skips
+   *  tracks that turn out to have no lyrics. */
+  function lyricsAvailability(model) {
+    if (!model.loggedIn) return { word: false, line: false, static: false };
+    const flagsKnown = model.tracks.some(
+      (t) => t.hasLyrics !== undefined || t.hasTimeSyncedLyrics !== undefined,
+    );
+    if (!flagsKnown) return { word: true, line: true, static: true };
+    const anySynced = model.tracks.some((t) => t.hasTimeSyncedLyrics);
+    const anyLyrics = model.tracks.some((t) => t.hasLyrics || t.hasTimeSyncedLyrics);
+    return { word: anySynced, line: anySynced, static: anyLyrics };
+  }
+
+  /** Download the entity's lyrics in `tier` ('word'|'line'|'static'). Album → a ZIP of
+   *  per-track files; single song → one file. Tracks without lyrics are skipped.
+   *  Requires a logged-in subscriber session (the endpoints need the user token). */
+  async function downloadLyrics(model, tier) {
+    const tierLabel = { word: 'word-by-word', line: 'line-by-line', static: 'static' }[tier];
+    const tracks = model.tracks.filter((t) => t.id);
+    if (!tracks.length) return toast('No tracks to fetch lyrics for');
+    const userToken = getUserToken();
+    if (!userToken) return toast('Log in to Apple Music to download lyrics');
+    let devToken;
+    try {
+      devToken = await getDevToken();
+    } catch (err) {
+      return toast(`Lyrics failed: ${err.message}`);
+    }
+    toast(`Fetching ${tierLabel} lyrics…`);
+    const out = [];
+    for (const t of tracks) {
+      const lyr = await trackLyrics(model.country, t.id, tier, devToken, userToken);
+      if (lyr) out.push({ t, ...lyr });
+    }
+    if (!out.length) return toast('No downloadable lyrics found for this release');
+
+    if (model.kind !== 'album' || out.length === 1) {
+      const r = out[0];
+      downloadBlob(
+        new Blob([r.text], { type: 'text/plain;charset=utf-8' }),
+        `${lyricsFileStem(r.t)}.${r.ext}`,
+      );
+      return toast('Lyrics saved ✓');
+    }
+    try {
+      const zip = new JSZip();
+      for (const r of out) zip.file(`${lyricsFileStem(r.t)}.${r.ext}`, r.text);
+      const tag = tierLabel.replace(/[^a-z]/gi, '');
+      downloadBlob(
+        await zip.generateAsync({ type: 'blob' }),
+        `${safeName(model.artist)} - ${safeName(model.name)}_Lyrics_${tag}.zip`,
+      );
+      toast(`Lyrics ZIP saved (${out.length} tracks) ✓`);
+    } catch (err) {
+      toast(`Lyrics ZIP failed: ${err.message}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  //  Section 4c — ISWC lookup (MusicBrainz + credits.fm) → MusicBrainz seeding
+  // -------------------------------------------------------------------------
+  //
+  //  Apple exposes writers (composerName) but NO ISWC. On explicit click we look each
+  //  track's ISWC up from two free sources and present RANKED CANDIDATES the user
+  //  confirms, plus a deep-link that pre-seeds a MusicBrainz edit (the planned Phase-2
+  //  MB-side companion enhances the seeding). Nothing is ever written automatically.
+  //    • MusicBrainz — GET /ws/2/work?query=work:"<title>" AND artist:"<writer>"&fmt=json
+  //      → works with `score` (0–100), `id` (the MB work MBID, used for seeding) and an
+  //      `iswcs` array (present only when MB already knows one). @connect musicbrainz.org
+  //      + descriptive UA, ≤1 req/sec (so an album is looked up sequentially).
+  //    • credits.fm — GET api.credits.fm/v1/search?q=<title> → songs.items[{iswc,title}]
+  //      (CORS-open; aggregates CISAC/MLC/MB). A gap-filler when MB has no ISWC; the index
+  //      is noisy, so we title-match. credits.fm/MLC/CISAC ISWCs are HINTS to verify, not
+  //      facts (CC-BY) — never machine-imported.
+  //  Confidence = source agreement + MB score + a writer/title match. Title-only matching
+  //  is unreliable, so a human always confirms before seeding. (The lookup endpoints are
+  //  verifiable; the overlay UI needs an in-browser check when editing.)
+
+  const CREDITSFM_BASE = 'https://api.credits.fm/v1';
+
+  /** Normalise an ISWC for display: "T-DDD.DDD.DDD-D" (or '' if it isn't one). */
+  function normIswc(s) {
+    const m = String(s || '')
+      .toUpperCase()
+      .replace(/[^0-9T]/g, '')
+      .match(/^T?(\d{10})$/);
+    if (!m) return '';
+    const d = m[1];
+    return `T-${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+  }
+  /** Digits-only ISWC key for dedupe/compare. */
+  const iswcKey = (s) =>
+    String(s || '')
+      .toUpperCase()
+      .replace(/[^0-9]/g, '');
+
+  /** Title reduced for matching: drop (feat. …)/[Remastered]/" - 2013 Mix", lower-case. */
+  function normTitle(s) {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
+      .replace(/\s*-\s*.*$/, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  /** Surnames from a free-text composer credit ("A B, C D & E F" → ["B","D","F"]). */
+  function writerSurnames(composer) {
+    return String(composer || '')
+      .split(/,|&|\/| and /i)
+      .map((n) => n.trim().split(/\s+/).pop())
+      .filter((n) => n && n.length > 1);
+  }
+
+  /** Lucene-escape a value for a MusicBrainz query. */
+  function mbEscape(s) {
+    return String(s || '').replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&');
+  }
+
+  /** Search MusicBrainz works by title (+ optional writer surname). Resolves to
+   *  candidates [{ iswc, iswcKey, mbid, score, title }] (iswc '' when MB has none).
+   *  Never rejects — resolves [] on any error (best-effort lookup). */
+  function mbWorkSearch(title, surname) {
+    let q = `work:"${mbEscape(title)}"`;
+    if (surname) q += ` AND artist:"${mbEscape(surname)}"`;
+    const url = `${MUSICBRAINZ_BASE}/work?query=${encodeURIComponent(q)}&fmt=json&limit=5`;
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        headers: { 'User-Agent': MB_USER_AGENT, Accept: 'application/json' },
+        onload: (res) => {
+          let data;
+          try {
+            data = JSON.parse(res.responseText);
+          } catch {
+            return resolve([]);
+          }
+          const works = Array.isArray(data.works) ? data.works : [];
+          resolve(
+            works.map((w) => {
+              const raw = (Array.isArray(w.iswcs) && w.iswcs[0]) || '';
+              return {
+                iswc: normIswc(raw),
+                iswcKey: iswcKey(raw),
+                mbid: w.id || '',
+                score: +w.score || 0,
+                title: w.title || '',
+              };
+            }),
+          );
+        },
+        onerror: () => resolve([]),
+        ontimeout: () => resolve([]),
+      });
+    });
+  }
+
+  /** Search credits.fm for ISWC candidates by title. Resolves to [{ iswc, iswcKey, title }].
+   *  (q is lower-cased to avoid the API's case-redirect.) */
+  function creditsFmSearch(title) {
+    const url = `${CREDITSFM_BASE}/search?q=${encodeURIComponent(String(title).toLowerCase())}`;
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        headers: { Accept: 'application/json' },
+        onload: (res) => {
+          let data;
+          try {
+            data = JSON.parse(res.responseText);
+          } catch {
+            return resolve([]);
+          }
+          const items = (data.songs && data.songs.items) || [];
+          resolve(
+            items
+              .filter((it) => it.iswc)
+              .map((it) => ({
+                iswc: normIswc(it.iswc),
+                iswcKey: iswcKey(it.iswc),
+                title: it.title || '',
+              })),
+          );
+        },
+        onerror: () => resolve([]),
+        ontimeout: () => resolve([]),
+      });
+    });
+  }
+
+  /** Look one track's ISWC up across the enabled sources. Returns
+   *  { title, iswc, mbid, sources:[…], confidence:'high'|'medium'|'low'|'none' }. */
+  async function lookupTrackIswc(track) {
+    const title = track.name || '';
+    const surnames = writerSurnames(track.composer);
+    const nt = normTitle(title);
+
+    const mb = settings.iswcSourceMb ? await mbWorkSearch(title, surnames[0]) : [];
+    const mbBest =
+      mb.filter((c) => c.iswcKey).sort((a, b) => b.score - a.score)[0] ||
+      mb.slice().sort((a, b) => b.score - a.score)[0] ||
+      null;
+
+    // Only spend a credits.fm call when MusicBrainz didn't already supply an ISWC.
+    let cf = [];
+    if (settings.iswcSourceCreditsFm && (!mbBest || !mbBest.iswcKey)) {
+      cf = (await creditsFmSearch(title)).filter((c) => {
+        const ct = normTitle(c.title);
+        return ct === nt || ct.includes(nt) || nt.includes(ct);
+      });
+    }
+
+    // Merge candidates by ISWC key (source agreement is the strongest signal).
+    const byKey = new Map();
+    const add = (iswc, key, src, score) => {
+      if (!key) return;
+      const e = byKey.get(key) || { iswc, sources: new Set(), score: 0 };
+      e.sources.add(src);
+      e.score = Math.max(e.score, score || 0);
+      byKey.set(key, e);
+    };
+    mb.forEach((c) => add(c.iswc, c.iswcKey, 'MusicBrainz', c.score));
+    cf.forEach((c) => add(c.iswc, c.iswcKey, 'credits.fm', 70));
+
+    const best = [...byKey.values()].sort(
+      (a, b) => b.sources.size - a.sources.size || b.score - a.score,
+    )[0];
+
+    let confidence = 'none';
+    if (best) {
+      const corroborated = best.sources.size >= 2;
+      const strongMb = best.sources.has('MusicBrainz') && best.score >= 90;
+      if (corroborated || (strongMb && surnames.length)) confidence = 'high';
+      else if (best.score >= 80 || best.sources.has('MusicBrainz')) confidence = 'medium';
+      else confidence = 'low';
+    }
+    return {
+      title,
+      writers: track.composer || '', // free-text writer credit, passed to the MB seeder
+      iswc: best ? best.iswc : '',
+      mbid: mbBest ? mbBest.mbid : '',
+      sources: best ? [...best.sources] : [],
+      confidence,
+    };
+  }
+
+  /** Deep-link that pre-seeds a MusicBrainz edit for a track's ISWC: an existing work →
+   *  its edit form with the ISWC seeded; otherwise the Add-Work form seeded with title +
+   *  ISWC. MusicBrainz seeds form inputs from query params named like the field. */
+  function mbSeedUrl(rec) {
+    const p = new URLSearchParams();
+    if (rec.iswc) p.set('edit-work.iswcs.0', rec.iswc);
+    // ITAM markers — read by the optional MB-side companion (MB ISWC Seeder) to surface
+    // the ISWC + writers on the edit page; MusicBrainz ignores unknown query params.
+    p.set('itam', '1');
+    if (rec.iswc) p.set('itam-iswc', rec.iswc);
+    if (rec.title) p.set('itam-title', rec.title);
+    if (rec.writers) p.set('itam-writers', rec.writers);
+    if (rec.mbid) return `https://musicbrainz.org/work/${rec.mbid}/edit?${p}`;
+    p.set('edit-work.name', rec.title || '');
+    return `https://musicbrainz.org/work/create?${p}`;
+  }
+
+  /** Open the ISWC results overlay and look each track up on demand. Sequential
+   *  because MusicBrainz rate-limits to ~1 req/sec; the table fills in as it goes. */
+  async function findIswcs(model) {
+    const tracks = model.tracks.filter((t) => t.name);
+    if (!tracks.length) return toast('No tracks to look up');
+    document.querySelector('.itam-overlay')?.remove();
+    const panel = el('div', { class: 'itam-panel' });
+    const overlay = el('div', { class: 'itam-overlay' }, panel);
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close();
+    });
+    panel.append(el('button', { class: 'itam-close', text: '×', onclick: close, title: 'Close' }));
+    panel.append(el('h2', { text: 'ISWC lookup' }));
+    panel.append(el('h3', { text: `${model.artist || ''} — ${model.name || ''}` }));
+    const count = el('span', { text: `0/${tracks.length}` });
+    const status = el('div', { class: 'itam-row' }, el('b', { text: 'Looking up… ' }), count);
+    panel.append(status);
+    const tbody = el('tbody');
+    const head = el('tr');
+    ['#', 'Title', 'ISWC', 'Confidence', 'Source', ''].forEach((h) =>
+      head.append(el('th', { text: h })),
+    );
+    panel.append(el('table', { class: 'itam-table' }, el('thead', {}, head), tbody));
+    document.body.append(overlay);
+
+    const found = [];
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      const rec = await lookupTrackIswc(t); // sequential: MusicBrainz is ~1 req/sec
+      if (rec.iswc) found.push(rec.iswc);
+      const tr = el('tr');
+      tr.append(el('td', { text: t.track ? `${t.disc}.${t.track}` : String(i + 1) }));
+      tr.append(el('td', { text: t.name }));
+      tr.append(
+        el('td', {
+          class: 'itam-mono itam-isrc',
+          text: rec.iswc || '—',
+          title: rec.iswc ? 'Click to copy' : '',
+          onclick: () => rec.iswc && copy(rec.iswc, 'ISWC copied'),
+        }),
+      );
+      tr.append(el('td', { text: rec.confidence === 'none' ? '—' : rec.confidence }));
+      tr.append(el('td', { text: rec.sources.join(', ') || '—' }));
+      const seedTd = el('td');
+      if (rec.iswc || rec.mbid) {
+        const url = mbSeedUrl(rec);
+        const a = el('a', {
+          class: 'itam-btn',
+          text: 'Seed MB ↗',
+          href: url,
+          target: '_blank',
+          rel: 'noopener',
+          title: rec.mbid
+            ? 'Seed the ISWC onto the existing MusicBrainz work'
+            : 'Seed a new MusicBrainz work',
+        });
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.open(url, '_blank', 'noopener');
+        });
+        seedTd.append(a);
+      }
+      tr.append(seedTd);
+      tbody.append(tr);
+      count.textContent = `${i + 1}/${tracks.length}`;
+    }
+    status.firstChild.textContent = 'Done — ';
+    if (found.length) {
+      panel.append(
+        el(
+          'div',
+          { class: 'itam-actions' },
+          el('button', {
+            class: 'itam-btn',
+            text: `Copy all ISWCs (${found.length})`,
+            onclick: () => copy(found.join('\n'), `${found.length} ISWCs copied`),
+          }),
+        ),
+      );
+    }
+    panel.append(
+      el('div', {
+        class: 'itam-foot',
+        text: 'Candidates from MusicBrainz + credits.fm — confirm the writers match before seeding. credits.fm data is CC-BY; treat ISWCs as hints to verify, not facts to import.',
+      }),
+    );
+  }
+
+  /** "Find ISWCs" button. Returns null when the feature is off or there's nothing
+   *  to look up. */
+  function iswcControl(model, btnClass) {
+    if (!settings.iswcLookup || !model.tracks.some((t) => t.name)) return null;
+    return el('button', {
+      class: btnClass,
+      text: 'Find ISWCs',
+      title: "Look up each track's ISWC (MusicBrainz + credits.fm) and seed MusicBrainz",
+      onclick: () => findIswcs(model),
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -963,42 +1485,27 @@
     return wrap;
   }
 
-  /** Build the cover-art control: a single "Download cover art" button when only
-   *  static art exists, or a dropdown (Static / Square / Vertical / All) when the
-   *  album also has motion artwork. `btnClass` styles the trigger for the header
-   *  (`itam-chip`) or the panel (`itam-btn`). Returns null if there's no art. */
-  function coverArtControl(model, btnClass) {
-    const src = coverSources(model);
-    const opts = [];
-    if (src.static) opts.push(['Static cover art', () => downloadCoverArt(model)]);
-    if (src.square) opts.push(['Square animated', () => downloadMotion(model, 'square')]);
-    if (src.vertical) opts.push(['Vertical animated', () => downloadMotion(model, 'vertical')]);
-    if (src.square || src.vertical) opts.push(['All cover art', () => downloadAllArt(model)]);
+  /** Generic action control: a single button when there's one option, else a
+   *  dropdown (▾) listing them. `opts` is [[label, fn], …]; returns null if empty.
+   *  `btnClass` styles the trigger for the header (`itam-chip`) or panel (`itam-btn`).
+   *  Shared by the cover-art and lyrics controls. */
+  function ddControl(btnClass, label, title, opts) {
     if (!opts.length) return null;
     if (opts.length === 1) {
-      return el('button', {
-        class: btnClass,
-        text: 'Download cover art',
-        title: 'Save the highest-resolution cover art',
-        onclick: opts[0][1],
-      });
+      return el('button', { class: btnClass, text: label, title, onclick: opts[0][1] });
     }
     const wrap = el('div', { class: 'itam-dd' });
-    const trigger = el('button', {
-      class: btnClass,
-      text: 'Download cover art ▾',
-      title: 'Static + animated (motion) cover art',
-    });
+    const trigger = el('button', { class: btnClass, text: `${label} ▾`, title });
     trigger.addEventListener('click', (e) => {
       e.stopPropagation();
       wrap.classList.toggle('open');
     });
     const menu = el('div', { class: 'itam-dd-menu' });
-    for (const [label, fn] of opts) {
+    for (const [lbl, fn] of opts) {
       menu.append(
         el('button', {
           class: 'itam-dd-item',
-          text: label,
+          text: lbl,
           onclick: (e) => {
             e.stopPropagation();
             wrap.classList.remove('open');
@@ -1009,6 +1516,31 @@
     }
     wrap.append(trigger, menu);
     return wrap;
+  }
+
+  /** Build the cover-art control: a single "Download cover art" button when only
+   *  static art exists, or a dropdown (Static / Square / Vertical / All) when the
+   *  album also has motion artwork. Returns null if there's no art. */
+  function coverArtControl(model, btnClass) {
+    const src = coverSources(model);
+    const opts = [];
+    if (src.static) opts.push(['Static cover art', () => downloadCoverArt(model)]);
+    if (src.square) opts.push(['Square animated', () => downloadMotion(model, 'square')]);
+    if (src.vertical) opts.push(['Vertical animated', () => downloadMotion(model, 'vertical')]);
+    if (src.square || src.vertical) opts.push(['All cover art', () => downloadAllArt(model)]);
+    return ddControl(btnClass, 'Download cover art', 'Static + animated (motion) cover art', opts);
+  }
+
+  /** Build the "Download Lyrics" control — a dropdown of the tiers actually available
+   *  (Word-by-Word / Line-by-Line / Static). Returns null when nothing is downloadable
+   *  (not logged in, or the release has no lyrics) so the button is simply not shown. */
+  function lyricsControl(model, btnClass) {
+    const avail = lyricsAvailability(model);
+    const opts = [];
+    if (avail.word) opts.push(['Word-by-Word Lyrics', () => downloadLyrics(model, 'word')]);
+    if (avail.line) opts.push(['Line-by-Line Lyrics', () => downloadLyrics(model, 'line')]);
+    if (avail.static) opts.push(['Static Lyrics', () => downloadLyrics(model, 'static')]);
+    return ddControl(btnClass, 'Download Lyrics', 'Synced / word-by-word lyrics', opts);
   }
 
   /** Find the album-title heading (robust to Apple's hashed class names): the
@@ -1040,7 +1572,14 @@
     const isAlbum = page && page.type === 'album';
     const wantBarcode = settings.showBarcodeIsrc;
     const wantHarmony = settings.harmonyLookup && isAlbum;
-    if (!wantBarcode && !settings.coverArt && !wantHarmony) return;
+    if (
+      !wantBarcode &&
+      !settings.coverArt &&
+      !wantHarmony &&
+      !settings.downloadLyrics &&
+      !settings.iswcLookup
+    )
+      return;
     if (document.querySelector('.itam-inline-actions')) return; // already shown
     const anchor = findTitleAnchor(model.name);
     if (!anchor) return;
@@ -1058,6 +1597,14 @@
     }
     if (settings.coverArt) {
       const ctrl = coverArtControl(model, 'itam-chip'); // dropdown if motion art exists
+      if (ctrl) row.append(ctrl);
+    }
+    if (settings.downloadLyrics) {
+      const ctrl = lyricsControl(model, 'itam-chip'); // null unless logged in + lyrics exist
+      if (ctrl) row.append(ctrl);
+    }
+    if (settings.iswcLookup) {
+      const ctrl = iswcControl(model, 'itam-chip');
       if (ctrl) row.append(ctrl);
     }
     if (wantHarmony) {
@@ -1167,6 +1714,14 @@
     }
     if (settings.coverArt) {
       const ctrl = coverArtControl(model, 'itam-btn'); // dropdown if motion art exists
+      if (ctrl) actions.append(ctrl);
+    }
+    if (settings.downloadLyrics) {
+      const ctrl = lyricsControl(model, 'itam-btn'); // null unless logged in + lyrics exist
+      if (ctrl) actions.append(ctrl);
+    }
+    if (settings.iswcLookup) {
+      const ctrl = iswcControl(model, 'itam-btn');
       if (ctrl) actions.append(ctrl);
     }
     if (settings.harmonyLookup && model.kind === 'album') {
@@ -1356,6 +1911,24 @@
       ),
       addMenuCommand('coverArt', `Download cover art button: ${on(settings.coverArt)}`, () =>
         toggleSetting('coverArt', 'Cover-art button'),
+      ),
+      addMenuCommand(
+        'downloadLyrics',
+        `Download Lyrics button: ${on(settings.downloadLyrics)}`,
+        () => toggleSetting('downloadLyrics', 'Download Lyrics button'),
+      ),
+      addMenuCommand('iswcLookup', `Find ISWCs button: ${on(settings.iswcLookup)}`, () =>
+        toggleSetting('iswcLookup', 'Find ISWCs button'),
+      ),
+      addMenuCommand(
+        'iswcSourceMb',
+        `ISWC source · MusicBrainz: ${on(settings.iswcSourceMb)}`,
+        () => toggleSetting('iswcSourceMb', 'ISWC source MusicBrainz', 'Find ISWCs'),
+      ),
+      addMenuCommand(
+        'iswcSourceCreditsFm',
+        `ISWC source · credits.fm: ${on(settings.iswcSourceCreditsFm)}`,
+        () => toggleSetting('iswcSourceCreditsFm', 'ISWC source credits.fm', 'Find ISWCs'),
       ),
       // Prompt items: the label now refreshes live once you choose, so the new value
       // shows without reopening the menu (this is what used to "look dead").

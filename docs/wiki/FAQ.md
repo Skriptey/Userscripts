@@ -111,6 +111,34 @@ resolution** menu item — **L** (1080) / **XL** (2160) / **Max** (highest); not
 XL and Max are **very large** (hundreds of MB), so at those sizes the animated
 files download separately instead of zipping.
 
+**Q. Can I download lyrics?**
+Yes — when you're **logged in to Apple Music**, the **Download Lyrics** button (in the
+header and the panel) offers whatever the release actually has: **Word-by-Word** (Apple
+Music “Sing”), **Line-by-Line** (time-synced), and **Static** (plain text). Word and
+line save as `.lrc` (word-by-word as enhanced “A2” LRC), static as `.txt`. An album
+bundles every track into a ZIP with files named `<disc> - <track> - <title>.<ext>`; a
+single song saves one file. If you're not logged in, or the release has no lyrics, the
+button isn't shown. Lyrics need your **logged-in subscription** (Apple gates them behind
+your account) and are licensed content, so the export is for **personal use** only.
+
+**Q. The Download Lyrics button isn't showing.**
+It only appears when you're **logged in to Apple Music** _and_ the release has lyrics
+(it's deliberately hidden otherwise). Make sure you're signed in, then reload. Word-by-
+word lyrics also only exist for songs Apple has “Sing” data for — other songs still
+offer Line-by-Line and Static.
+
+**Q. What does “Find ISWCs” do?**
+Apple shows the **writers** of a song but not its **ISWC** (the International Standard
+Musical Work Code — the composition's counterpart to a recording's ISRC). **Find ISWCs**
+looks each track up from **MusicBrainz** (and, when MusicBrainz has none, **credits.fm**)
+by title + writer, and shows a table with each track's best **candidate ISWC**, a
+**confidence** (high/medium/low), the **source**, one-click copy, and a **“Seed MB ↗”**
+button that opens a **pre-filled MusicBrainz edit** for you to review and submit. It runs
+only when you click, sends only the public title/writer (no account tokens), and **never
+writes to MusicBrainz by itself** — you always confirm. Matching by title + writer isn't
+perfect, so **verify the writers** before seeding; credits.fm values are hints, not facts.
+You can turn each source off in the menu.
+
 **Q. It says it couldn't get the token.**
 Reload the page (the player must have initialised). If it persists, use the
 menu's "Clear cached Apple Music token". Apple occasionally moves the token —

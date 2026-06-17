@@ -22,9 +22,9 @@ covered automatically (Apple redirects them to Apple Music).
 ## Features
 
 - **Inline album-header buttons** — **Barcode & ISRCs** (opens the panel),
-  **Download cover art**, and **Harmony ↗**, placed after the format badges. Each
-  is independently toggleable; the floating **ITAM ▾** launcher remains as a
-  fallback.
+  **Download cover art**, **Download Lyrics** (logged-in), and **Harmony ↗**, placed
+  after the format badges. Each is independently toggleable; the floating **ITAM ▾**
+  launcher remains as a fallback.
 - **Format badges** — Lossless / Hi-Res Lossless / Dolby Atmos / Spatial Audio,
   inline near the title and in the panel.
 - **Barcode (UPC)** and **per-track ISRCs**, in a clean table.
@@ -45,6 +45,18 @@ covered automatically (Apple redirects them to Apple Music).
   Square / Vertical / All** (`.mp4` — `…_SquareCover.mp4` / `…_VerticalCover.mp4`).
   **All** → a `<artist> - <album>_CoverArt.zip` at the L resolution. Resolution is
   set via **Animated cover-art resolution** (L 1080 / XL 2160 / Max highest).
+- **Download Lyrics** _(logged-in only)_ — a dropdown of the tiers available:
+  **Word-by-Word** (Apple Music “Sing” → enhanced/“A2” `.lrc`), **Line-by-Line**
+  (`.lrc`), and **Static** (`.txt`). An album bundles every track into a ZIP named
+  `<disc> - <track> - <title>.<ext>`; a single song saves one file. The button is
+  **hidden when nothing is downloadable**. Lyrics are licensed content — **personal
+  use** only.
+- **Find ISWCs** — Apple gives writers but no ISWC, so on click this looks each track's
+  **ISWC** up from **MusicBrainz** (+ a **credits.fm** gap-fill) and shows ranked
+  candidates with a **confidence** and **source**, one-click copy, and a **“Seed MB ↗”**
+  deep-link that pre-fills a MusicBrainz edit. **Human-confirmed** — nothing is written
+  automatically (read-only; sends only the public title/writer, no tokens). Each source
+  is a toggle. Treat ISWCs as hints to verify.
 - Works on **album / song / music-video** pages on both **music.apple.com** and
   **classical.music.apple.com** (Apple Music Classical), every storefront, and
   follows the single-page navigation. Legacy `itunes.apple.com` links aren't
@@ -63,6 +75,10 @@ Userscript-manager menu (toolbar icon, on an Apple Music page):
 | Inline format badges           | on                 | Sub-option of _Show audio formats_.                                                      |
 | Integrate Harmony lookup       | on                 | The **Harmony ↗** header/panel button (albums).                                          |
 | Download cover art button      | on                 | Static + animated cover-art control.                                                     |
+| Download Lyrics button         | on                 | Word-by-Word / Line-by-Line / Static lyrics. Logged-in only; hidden when no lyrics.      |
+| Find ISWCs button              | on                 | Per-track ISWC lookup + MusicBrainz seeding (on click).                                  |
+| ISWC source · MusicBrainz      | on                 | Sub-option of _Find ISWCs_: query MusicBrainz (primary; gives the work MBID).            |
+| ISWC source · credits.fm       | on                 | Sub-option of _Find ISWCs_: credits.fm gap-fill when MusicBrainz has no ISWC.            |
 | Animated cover-art resolution  | L                  | Prompts for L=1080 · XL=2160 · Max=highest (XL/Max huge).                                |
 | Locale override                | storefront default | API locale, e.g. `en-US`.                                                                |
 | Clear cached Apple Music token | —                  | Re-captured on next use.                                                                 |

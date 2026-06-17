@@ -24,7 +24,8 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
 
 - **Inline album-header buttons** — a button row appears in the album header
   (after the format badges): **Barcode & ISRCs** (opens the panel), **Download
-  cover art**, and **Harmony ↗**. Each is independently toggleable.
+  cover art**, **Download Lyrics** (when logged in), **Find ISWCs**, and
+  **Harmony ↗**. Each is independently toggleable.
 - **Format badges** — shows the album's `audioTraits` as badges (Lossless,
   Hi-Res Lossless, Dolby Atmos, Spatial Audio, …) inline near the title (toggle
   in settings) and in the details panel.
@@ -65,6 +66,27 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   (huge) animated files save separately instead of zipping. Resolution is set via
   the **Animated cover-art resolution** menu item (**L** 1080 · **XL** 2160 ·
   **Max** highest).
+- **Download Lyrics** _(requires being logged in to Apple Music)_ — a dropdown of
+  the lyric tiers actually available for the release: **Word-by-Word Lyrics**
+  (Apple Music “Sing”, saved as enhanced/“A2” `.lrc`), **Line-by-Line Lyrics**
+  (standard `.lrc`), and **Static Lyrics** (plain `.txt`). An album bundles every
+  track into a ZIP with files named `<disc> - <track> - <title>.<ext>`; a single
+  song saves one file. The button is **hidden when nothing is downloadable** (you’re
+  not logged in, or the release has no lyrics). Lyrics come from Apple’s
+  `syllable-lyrics`/`lyrics` TTML and need your **logged-in subscription**; they are
+  licensed content, so this is for **personal use** only. Toggle with **Download
+  Lyrics button**.
+- **Find ISWCs** — Apple gives writers but **no ISWC**, so on an explicit click this
+  looks each track's **ISWC** (the work code, the composition counterpart of an ISRC)
+  up from **[MusicBrainz](https://musicbrainz.org/)** (primary — also gives the work's
+  MBID) plus a **[credits.fm](https://credits.fm/)** gap-fill, and opens a results
+  table with each track's best **candidate**, a **confidence** (high/medium/low) and
+  the **source**, one-click copy, and a **“Seed MB ↗”** deep-link that pre-fills a
+  MusicBrainz edit. It's **human-confirmed** — nothing is written to MusicBrainz
+  automatically (a planned MB-side companion will streamline the seeding). Each source
+  is a toggle; the lookup sends only the public track **title/writer** (no tokens), and
+  credits.fm data is CC-BY, so treat ISWCs as **hints to verify**, not facts to import.
+  Toggle with **Find ISWCs button**.
 - Works on **album**, **song**, and **music-video** pages on both
   **music.apple.com** and **classical.music.apple.com** (Apple Music Classical),
   across all storefronts, and follows the in-app (single-page) navigation. The
@@ -86,6 +108,10 @@ Open your userscript manager's menu (its toolbar icon, on an Apple Music page):
 | Inline format badges           | `on`               | Sub-option of _Show audio formats_: also inject badges near the album title.                                                    |
 | Integrate Harmony lookup       | `on`               | The **Harmony ↗** header/panel button (album cross-service lookup).                                                             |
 | Download cover art button      | `on`               | The **Download cover art** header/panel control (static + animated dropdown).                                                   |
+| Download Lyrics button         | `on`               | The **Download Lyrics** header/panel control (Word-by-Word / Line-by-Line / Static). Shown only when logged in + lyrics exist.  |
+| Find ISWCs button              | `on`               | The **Find ISWCs** header/panel control — per-track ISWC lookup + MusicBrainz seeding (runs on click).                          |
+| ISWC source · MusicBrainz      | `on`               | Sub-option of _Find ISWCs_: query MusicBrainz works (primary; supplies the work MBID for seeding).                              |
+| ISWC source · credits.fm       | `on`               | Sub-option of _Find ISWCs_: query credits.fm as a gap-fill when MusicBrainz has no ISWC.                                        |
 | Animated cover-art resolution  | `L`                | Prompts for **L** (1080), **XL** (2160), or **Max** (highest). XL/Max are very large.                                           |
 | Locale override                | storefront default | Apple Music locale (e.g. `en-US`, `ja-JP`) for the API.                                                                         |
 | Clear cached Apple Music token | —                  | Forget the cached catalog credential (re-captured on next use).                                                                 |
@@ -160,14 +186,16 @@ reused):
   (toasts), `unsafeWindow` (read the page's MusicKit tokens).
 - **Cross-origin hosts (`@connect`):** `amp-api.music.apple.com` (catalog API),
   `mzstatic.com` (static cover art), `itunes.apple.com` (animated-artwork HLS on
-  `mvod.itunes.apple.com`), and `musicbrainz.org` (the barcode→MBID lookup for
-  MagicISRC, made **only when you click** Submit to MagicISRC). The app bundle is
-  fetched same-origin; the Harmony button opens a URL (no fetch). **Apple Music
-  Classical** (`classical.music.apple.com`) reads the **same** catalog API from the
-  same hosts — adding that `@match` introduces no new cross-origin endpoint.
+  `mvod.itunes.apple.com`), `musicbrainz.org` (the barcode→MBID lookup for MagicISRC
+  **and** the ISWC work search), and `api.credits.fm` (the ISWC gap-fill lookup). The
+  MusicBrainz/credits.fm requests are made **only when you click** Submit to MagicISRC
+  or **Find ISWCs**, and send only the **public title/barcode/writer** — never any
+  token. The app bundle is fetched same-origin; the Harmony button opens a URL (no
+  fetch). **Apple Music Classical** (`classical.music.apple.com`) reads the **same**
+  catalog API from the same hosts — adding that `@match` introduces no new endpoint.
 - **`@require`:** [JSZip 3.10.1](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js)
-  from cdnjs (pinned, immutable versioned URL) — only used to bundle the "All"
-  cover-art ZIP. No remote code is fetched at runtime.
+  from cdnjs (pinned, immutable versioned URL) — used to bundle the "All" cover-art
+  ZIP and the album lyrics ZIP. No remote code is fetched at runtime.
 - **No data exfiltration / no unsafe DOM:** the captured tokens are sent only to
   Apple's own API; all UI is built with `textContent` (no `innerHTML`). The
   catalog credential is cached locally (GM storage); the user token is read per
@@ -175,6 +203,16 @@ reused):
   to the user's machine. The only third-party request is the **MusicBrainz barcode
   lookup**, which runs **only on an explicit MagicISRC click** and sends just the
   public barcode (no tokens). Nothing else is sent to any third party.
+- **Lyrics:** **Download Lyrics** calls Apple's `syllable-lyrics`/`lyrics` endpoints,
+  which require your **logged-in Music-User-Token** — it does nothing when you're
+  logged out (the button is hidden). The TTML is fetched only from Apple's own API
+  and saved straight to your machine. Lyrics are third-party **licensed/copyrighted**
+  content, so this export is for **personal use** only.
+- **ISWC lookup:** **Find ISWCs** runs **only on click** and queries MusicBrainz +
+  credits.fm with just the **public title/writer** (no tokens). It is **read-only and
+  human-confirmed** — it never writes to MusicBrainz; the “Seed MB ↗” link only opens
+  a pre-filled MusicBrainz edit page in a new tab for **you** to review and submit.
+  credits.fm data is CC-BY (surfaced as a hint to verify, not imported as fact).
 
 ## License
 

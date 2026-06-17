@@ -6,6 +6,7 @@
 
 - [BunkrDL](BunkrDL)
 - [ITAM Enhancer](ITAMenhancer)
+- [MB ISWC Seeder](MB-ISWC-Seeder)
 
 **Help**
 

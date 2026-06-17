@@ -17,10 +17,11 @@ every line first.
 
 ## Scripts
 
-| Script                            | What it does                                                                                                                                                                                                          | Docs                                       |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| **[BunkrDL](BunkrDL)**            | Bulk-download Bunkr albums & balbums.st listings into size-capped ZIPs, rate-limited.                                                                                                                                 | [BunkrDL](BunkrDL) · [FAQ](FAQ)            |
-| **[ITAM Enhancer](ITAMenhancer)** | Apple Music & Apple Music Classical: audio formats, barcodes (UPC) & per-track ISRCs (copy + MagicISRC), plus inline header buttons, a Harmony cross-service lookup, cover-art download, and a classical Work column. | [ITAM Enhancer](ITAMenhancer) · [FAQ](FAQ) |
+| Script                               | What it does                                                                                                                                                                                                                                                                                  | Docs                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| **[BunkrDL](BunkrDL)**               | Bulk-download Bunkr albums & balbums.st listings into size-capped ZIPs, rate-limited.                                                                                                                                                                                                         | [BunkrDL](BunkrDL) · [FAQ](FAQ)            |
+| **[ITAM Enhancer](ITAMenhancer)**    | Apple Music & Apple Music Classical: audio formats, barcodes (UPC) & per-track ISRCs (copy + MagicISRC), plus inline header buttons, a Harmony cross-service lookup, cover-art download, synced/word-by-word lyrics download, ISWC lookup (MusicBrainz seeding), and a classical Work column. | [ITAM Enhancer](ITAMenhancer) · [FAQ](FAQ) |
+| **[MB ISWC Seeder](MB-ISWC-Seeder)** | MusicBrainz-side companion to ITAM's _Find ISWCs_: surfaces the ISWC + writers on a seeded Work edit page (one-click copy) to speed up adding the work + writer relationships. You always submit.                                                                                             | [MB ISWC Seeder](MB-ISWC-Seeder)           |
 
 ## Help
 
