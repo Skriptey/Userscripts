@@ -1,0 +1,22 @@
+# gitleaks configuration for Skriptey/Userscripts.
+#
+# Extends gitleaks' default ruleset (so all the normal secret detections still run)
+# and allowlists a small set of intentionally PUBLIC, non-secret values that the
+# generic "api-key" heuristic would otherwise flag. Loaded automatically by the
+# `gitleaks git` scan in .github/workflows/secret-scan.yml (no --config needed).
+#
+# NB: keep this allowlist tiny and specific (exact values), never broad path/rule
+# excludes — a real secret must still fail the build.
+
+title = "Skriptey/Userscripts gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentionally public, non-secret values committed on purpose"
+# Tidal's web "app token" (sent as X-Tidal-Token) is a PUBLIC client identifier — the
+# same value is baked into every Tidal client and open-source Tidal tool, and grants
+# only read-only access to the PUBLIC catalog (no user/account data). It is not a user
+# credential or secret, more like a public `client_id`. Used in scripts/tidal/.
+regexes = ['''CzET4vdadNUFQ5JU''']

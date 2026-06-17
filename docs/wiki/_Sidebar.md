@@ -7,6 +7,9 @@
 - [BunkrDL](BunkrDL)
 - [ITAM Enhancer](ITAMenhancer)
 - [MB ISWC Seeder](MB-ISWC-Seeder)
+- [Tidal Enhancer](Tidal-Enhancer)
+- [Deezer Enhancer](Deezer-Enhancer)
+- [Discogs Enhancer](Discogs-Enhancer)
 
 **Help**
 
