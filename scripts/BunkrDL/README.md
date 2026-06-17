@@ -107,7 +107,7 @@ manager's storage.
 | Max retries per file    | `4`        | Attempts before a file is counted as failed.                                                           |
 | Parallel downloads      | `1`        | Files fetched at once (1–8). Higher = faster, but more rate-limit/ban risk.                            |
 | Oversize file handling  | `ask`      | `ask` \| `extend` \| `skip` (see above).                                                               |
-| ZIP bundling            | `on`       | Off = save each file individually instead of zipping.                                                  |
+| ZIP bundling            | `on`       | Off = save each file individually instead of zipping. Changing it applies to the **next** download.    |
 | Compression             | `STORE`    | `STORE` (fast, no recompress — best for already-compressed media) or `DEFLATE`.                        |
 | Pre-flight confirmation | `on`       | Show a summary (count, size, # ZIPs) and confirm before a job starts.                                  |
 | Verify file sizes       | `on`       | Re-download files whose bytes fall short of the manifest size.                                         |

@@ -105,7 +105,7 @@ page) → **BunkrDL** commands. Settings persist across sessions.
 | Max retries per file    | `4`        | Attempts before a file is failed.                                                          |
 | Parallel downloads      | `1`        | Files at once (1–8). Higher = faster, more ban risk.                                       |
 | Oversize file handling  | `ask`      | `ask` / `extend` / `skip`.                                                                 |
-| ZIP bundling            | `on`       | Off = save files individually.                                                             |
+| ZIP bundling            | `on`       | Off = save files individually. Applies to the next download.                               |
 | Compression             | `STORE`    | `STORE` (best for media) or `DEFLATE`.                                                     |
 | Pre-flight confirmation | `on`       | Confirm count/size/# ZIPs before starting.                                                 |
 | Verify file sizes       | `on`       | Retry downloads shorter than the manifest size.                                            |

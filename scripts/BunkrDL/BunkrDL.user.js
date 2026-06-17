@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.6.0
+// @version      1.6.1
 // @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums and balbums.st listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -901,9 +901,17 @@
     const maxZipBytes = Math.max(1, settings.maxZipMB) * MIB;
     const totalBytes = files.reduce((s, f) => s + f.size, 0);
 
+    // Snapshot ZIP-ness for the LIFE of this job. The `zip` handle (below) is
+    // created once, here; but if we read settings.zip *live* in packOne and the
+    // user toggled "ZIP bundling" on from the menu mid-download, packOne would
+    // take the ZIP branch with a still-null `zip` and crash every file with
+    // "Cannot read properties of null (reading 'file')". Snapshotting keeps the
+    // running job consistent — the toggle simply applies to the *next* job.
+    const usingZip = settings.zip;
+
     // Pre-flight confirmation so a huge album never starts by accident.
     if (settings.confirm) {
-      const plan = settings.zip
+      const plan = usingZip
         ? `into ~${Math.max(1, Math.ceil(totalBytes / maxZipBytes))} ZIP(s) of up to ` +
           `${settings.maxZipMB} MiB named "${sanitizeFilename(album.title)}_N.zip"`
         : `as ${files.length} individual file(s)`;
@@ -956,7 +964,7 @@
       });
 
       // --- ZIP packer state (mutated only inside the serialized packChain) ----
-      let zip = settings.zip ? new JSZip() : null;
+      let zip = usingZip ? new JSZip() : null;
       let zipBytes = 0;
       let zipCount = 0;
       let zipPart = resume.part || 1;
@@ -1030,7 +1038,7 @@
         const size = blob.size;
         bytesDone += size;
 
-        if (!settings.zip) {
+        if (!usingZip) {
           // Hand off to the background drainer, then return so this worker
           // fetches the next file straight away. `done` and the resume commit
           // happen in drainSaves(), once the file is actually saved.
@@ -1049,6 +1057,11 @@
           }
           return;
         }
+
+        // Belt-and-braces: a ZIP-mode job must always have a live JSZip here.
+        // (The usingZip snapshot already prevents the toggle-mid-job crash; this
+        // also covers any future path that could leave `zip` null.)
+        if (!zip) zip = new JSZip();
 
         // Flush first if this file would overflow the current ZIP's cap.
         if (zipCount > 0 && zipBytes + size > maxZipBytes) await flushZip();
@@ -1204,7 +1217,7 @@
 
       // In no-ZIP mode, run the background save drainer alongside the fetch
       // workers; in ZIP mode saving happens inside the (serialized) packChain.
-      const drainer = settings.zip ? null : drainSaves();
+      const drainer = usingZip ? null : drainSaves();
 
       const workers = Math.max(1, Math.min(8, Number(settings.concurrency) || 1));
       await Promise.all(Array.from({ length: workers }, () => worker()));
@@ -1987,7 +2000,9 @@
     });
     add(`ZIP bundling (current: ${settings.zip ? 'on' : 'off'})`, () => {
       saveSetting('zip', !settings.zip);
-      changed(`ZIP bundling ${settings.zip ? 'enabled' : 'disabled (files saved individually)'}.`);
+      changed(
+        `ZIP bundling ${settings.zip ? 'enabled' : 'disabled (files saved individually)'} — applies to the next download.`,
+      );
     });
     add(`Compression (current: ${settings.compression})`, () => {
       saveSetting('compression', settings.compression === 'STORE' ? 'DEFLATE' : 'STORE');
