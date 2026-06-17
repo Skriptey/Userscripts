@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.0
+// @version       1.7.1
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -325,7 +325,27 @@
     );
   }
 
+  /** Show a status message. Renders an ON-PAGE toast (always visible) AND fires a
+   *  native notification. The on-page toast matters because GM_notification
+   *  silently no-ops when notifications aren't granted — which made downloads with
+   *  no obvious file (e.g. a single .lrc) look like they "did nothing". */
   function toast(text) {
+    try {
+      let host = document.getElementById('itam-toasts');
+      if (!host) {
+        host = el('div', { id: 'itam-toasts', class: 'itam-toasts' });
+        (document.body || document.documentElement).appendChild(host);
+      }
+      const t = el('div', { class: 'itam-toast', text });
+      host.appendChild(t);
+      requestAnimationFrame(() => t.classList.add('show'));
+      setTimeout(() => {
+        t.classList.remove('show');
+        setTimeout(() => t.remove(), 300);
+      }, 4000);
+    } catch {
+      /* ignore */
+    }
     try {
       GM_notification({ title: 'ITAM Enhancer', text, silent: true, timeout: 2500 });
     } catch {
@@ -821,8 +841,11 @@
         url: API_BASE + path,
         headers,
         onload: (res) => {
-          if (res.status < 200 || res.status >= 300)
-            return reject(new Error(`API HTTP ${res.status}`));
+          if (res.status < 200 || res.status >= 300) {
+            const e = new Error(`API HTTP ${res.status}`);
+            e.status = res.status; // let callers (e.g. lyrics) report the code
+            return reject(e);
+          }
           try {
             resolve(JSON.parse(res.responseText));
           } catch {
@@ -1046,11 +1069,15 @@
         devToken,
         userToken,
       );
-    } catch {
+    } catch (err) {
+      // Log the status (NOT the lyrics) so a failing endpoint/auth is diagnosable.
+      console.warn(`[ITAM] lyrics ${kind} ${songId}: ${err.status || err.message}`);
       return null;
     }
     const ttml = json && json.data && json.data[0] && json.data[0].attributes?.ttml;
-    return typeof ttml === 'string' && ttml ? ttml : null;
+    if (typeof ttml === 'string' && ttml) return ttml;
+    console.warn(`[ITAM] lyrics ${kind} ${songId}: 200 but no ttml in response`);
+    return null;
   }
 
   /** Resolve one track's lyrics in the requested tier, AUTOMATICALLY FALLING BACK
@@ -1145,7 +1172,7 @@
           if ((TIER_RANK[lyr.kind] || 0) < (TIER_RANK[tier] || 0)) fellBack.add(lyr.kind);
         }
       }
-      if (!out.length) return toast('No downloadable lyrics found for this release');
+      if (!out.length) return toast('No lyrics returned for this release (see console for status)');
       const note = fellBack.size ? ` (some fell back to ${[...fellBack].sort().join(' / ')})` : '';
 
       if (model.kind !== 'album' || out.length === 1) {
@@ -1527,7 +1554,7 @@
       display:flex; align-items:flex-start; justify-content:center; padding:5vh 12px; }
     /* Width grows with the viewport (up to a cap) and shrinks on narrow screens;
        container-type lets the track table hide columns responsively (below). */
-    .itam-panel { width:min(1200px,94vw); max-height:90vh; overflow:auto; container-type:inline-size;
+    .itam-panel { width:min(1760px,94vw); max-height:90vh; overflow:auto; container-type:inline-size;
       background:#1c1c1e; color:#f2f2f7; border:1px solid #3a3a3c; border-radius:14px;
       padding:18px 20px; font:14px/1.5 system-ui,-apple-system,sans-serif;
       box-shadow:0 18px 50px rgba(0,0,0,.6); }
@@ -1555,6 +1582,14 @@
     .itam-mfit.off { opacity:.4; }
     /* Hide the Composer column when the panel is too narrow to fit it. */
     @container (max-width: 620px) { .itam-col-composer { display:none; } }
+    /* On-page status toasts (visible even when GM_notification isn't granted). */
+    .itam-toasts { position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+      z-index:2147483647; display:flex; flex-direction:column; gap:8px; align-items:center;
+      pointer-events:none; }
+    .itam-toast { background:#1c1c1e; color:#f2f2f7; border:1px solid #48484a; border-radius:10px;
+      padding:9px 14px; font:600 13px system-ui,sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.5);
+      max-width:80vw; opacity:0; transform:translateY(8px); transition:opacity .25s, transform .25s; }
+    .itam-toast.show { opacity:1; transform:translateY(0); }
     @media (prefers-color-scheme: light) {
       .itam-panel { background:#fff; color:#1c1c1e; border-color:#d1d1d6; }
       .itam-dd-menu { background:#fff; color:#1c1c1e; border-color:#d1d1d6; }
@@ -2202,34 +2237,35 @@
    *  maybeHeaderUI is serialised, so repeated attempts are cheap. */
   function placeHeaderUI() {
     if (placeStop) placeStop(); // cancel a previous route's attempts
-    const page = parsePage();
     const placed = () =>
       document.querySelector('.itam-inline-actions') || document.querySelector('.itam-badges');
-    const deadline = Date.now() + 20000; // overall cap (mostly waiting for the token)
-    let settledAt = 0; // when the model first became available (cached)
+    const startedAt = Date.now();
+    let everPlaced = false;
     let debounce = null;
     const attempt = () => {
-      if (placed() || Date.now() > deadline) return stop();
-      // Once the model is cached the header renders quickly — so if nothing has
-      // been placed ~3s after the data is ready, there is simply nothing to place
-      // here (e.g. a logged-out song page); stop, rather than churn for 20s.
-      if (page && entityCache.has(page.id)) {
-        if (!settledAt) settledAt = Date.now();
-        else if (Date.now() - settledAt > 3000) return stop();
-      }
+      // maybeHeaderUI is idempotent — it (re-)injects only when the badges/actions
+      // are MISSING. So this both places them late AND re-places them if Apple
+      // Music's React re-render wipes them — the cause of the inconsistent
+      // appearance (the inline UI would vanish on a re-render and never return).
       maybeHeaderUI();
+      if (placed()) everPlaced = true;
+      // Give up only if nothing has EVER placed after 30s — i.e. there is
+      // genuinely nothing to place here (e.g. a logged-out song page). Once it has
+      // placed, keep watching for the route's lifetime so a later wipe is
+      // re-injected; the observer is torn down on the next route change (placeStop).
+      else if (!everPlaced && Date.now() - startedAt > 30000) stop();
     };
-    // Debounce the (very chatty) SPA mutations so attempt() runs at most ~4×/s.
+    // Debounce the (very chatty) SPA mutations so attempt() runs at most ~3×/s.
     const schedule = () => {
       if (debounce) return;
       debounce = setTimeout(() => {
         debounce = null;
         attempt();
-      }, 250);
+      }, 350);
     };
     const obs = new MutationObserver(schedule);
     obs.observe(document.body, { childList: true, subtree: true });
-    const poll = setInterval(attempt, 700);
+    const poll = setInterval(attempt, 1200);
     function stop() {
       obs.disconnect();
       clearInterval(poll);
