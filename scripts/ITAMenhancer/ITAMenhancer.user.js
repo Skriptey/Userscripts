@@ -1,18 +1,21 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.3.0
-// @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, and cover-art download (static + animated/motion artwork), on music.apple.com pages.
+// @version       1.4.0
+// @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, and cover-art download (static + animated/motion artwork) — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
 // @match         https://music.apple.com/*
+// @match         https://classical.music.apple.com/*
 // @exclude-match https://music.apple.com/includes/commerce/fetch-proxy.html
+// @exclude-match https://classical.music.apple.com/includes/commerce/fetch-proxy.html
 // @run-at        document-idle
 // @grant         unsafeWindow
 // @grant         GM_xmlhttpRequest
 // @grant         GM_addStyle
 // @grant         GM_setClipboard
 // @grant         GM_registerMenuCommand
+// @grant         GM_unregisterMenuCommand
 // @grant         GM_getValue
 // @grant         GM_setValue
 // @grant         GM_notification
@@ -46,8 +49,29 @@
 //   https://magicisrc.kepstin.ca/
 //
 // ===========================================================================
-//  ITAM Enhancer — how it works (verified live against amp-api 2026-06-15)
+//  ITAM Enhancer — how it works
+//    (amp-api verified live 2026-06-15; Apple Music Classical 2026-06-17)
 // ===========================================================================
+//
+//  WHERE IT RUNS — two hosts, one catalog:
+//    • music.apple.com — the main Apple Music web player.
+//    • classical.music.apple.com — Apple Music Classical's web app. It is the
+//      same MusicKit/Vite stack reading the SAME catalog: classical album pages
+//      are /<cc>/album/<id> (the slug is simply omitted) and resolve through the
+//      very same amp-api catalog endpoint with an identical response shape (upc,
+//      isrc, audioTraits, artwork, editorialVideo). So token capture, the API
+//      call, cover-art and MagicISRC all work UNCHANGED — we only (a) match the
+//      extra host and (b) normalise the Harmony link to a music.apple.com URL
+//      (Harmony's Apple provider recognises only that host; the catalog id is the
+//      same, so it still matches). Classical tracks also carry workName /
+//      movementName, surfaced as an optional "Work" column.
+//    • itunes.apple.com — deliberately NOT matched, and it needs no match: Apple
+//      301-redirects every legacy iTunes music link server-side
+//      (/<cc>/album/<slug>/<id>, /<cc>/album/id<id>, …?i=<track>) to
+//      music.apple.com BEFORE any page renders, so those links already land where
+//      the script runs. The `@connect itunes.apple.com` is unrelated to page
+//      matching — it is required because the animated cover-art HLS streams are
+//      hosted on mvod.itunes.apple.com (see downloadMotionBlob).
 //
 //  Apple Music's web player calls Apple's catalog API (amp-api.music.apple.com)
 //  using credentials it already holds, and ITAM Enhancer reuses those NATIVE
@@ -90,7 +114,8 @@
 //         files at XL/Max (the 2160 videos are too large to ZIP in-page).
 //       • A details panel (formats, barcode, metadata, a track table with ISRCs
 //         and — for albums where a track's formats differ from the album-level
-//         set — a per-track "Formats" column, one-click copy, MagicISRC +
+//         set — a per-track "Formats" column, plus an optional "Work" column for
+//         classical releases that name a parent work, one-click copy, MagicISRC +
 //         Harmony links, "copy as JSON").
 //       • Optional inline format badges near the title.
 //
@@ -121,7 +146,8 @@
   /* global JSZip */ // provided by the pinned @require (cdnjs jszip 3.10.1)
 
   // Belt-and-braces guard: the manager's @exclude-match plus an explicit check
-  // for Apple Music's commerce iframe (same origin) so we don't run twice.
+  // for Apple Music's commerce iframe so we don't run twice. The pathname test is
+  // host-agnostic, so it covers the same iframe on classical.music.apple.com too.
   if (location.pathname === '/includes/commerce/fetch-proxy.html') return;
   if (window.__itamEnhancer_loaded) return;
   window.__itamEnhancer_loaded = true;
@@ -169,6 +195,7 @@
     showFormats: true, // FEATURE: audio-format badges (inline + in the panel)
     showBarcodeIsrc: true, // FEATURE: barcode (UPC) + per-track ISRCs (in the panel)
     perTrackFormats: true, // sub-option of showBarcodeIsrc: per-track "Formats" column for tracks whose formats differ from the album-level set
+    classicalInfo: true, // FEATURE: classical "Work" column in the track table (from each track's workName; shown only when present — e.g. Apple Music Classical / any classical release)
     autoBadges: true, // sub-option of showFormats: also inject badges inline near the title
     harmonyLookup: true, // FEATURE: "Harmony ↗" header/panel button (album cross-service lookup)
     coverArt: true, // FEATURE: "Download cover art" header/panel button (static + animated)
@@ -291,11 +318,27 @@
     return `${HARMONY_BASE}/release?${p.toString()}`;
   }
 
+  /** The canonical music.apple.com URL for the current entity. On
+   *  classical.music.apple.com (and any future Apple Music host) Harmony's Apple
+   *  provider only recognises the music.apple.com host — but the catalog id is
+   *  shared, so we rebuild a slugless music.apple.com URL from the parsed page
+   *  (`https://music.apple.com/<cc>/<type>/<id>`). Falls back to the current page
+   *  URL if the path can't be parsed. */
+  function appleMusicCanonicalUrl() {
+    const page = parsePage();
+    return page
+      ? `https://music.apple.com/${page.country}/${page.type}/${page.id}`
+      : location.origin + location.pathname;
+  }
+
   /** Open Harmony for the current album page in a new tab. Apple intercepts
    *  in-page link clicks, so the window is opened explicitly. */
   function openHarmony(model) {
-    const appleUrl = location.origin + location.pathname;
-    window.open(buildHarmonyUrl(appleUrl, model && model.upc), '_blank', 'noopener');
+    window.open(
+      buildHarmonyUrl(appleMusicCanonicalUrl(), model && model.upc),
+      '_blank',
+      'noopener',
+    );
   }
 
   // --- MagicISRC via a MusicBrainz barcode lookup ---------------------------
@@ -307,7 +350,7 @@
   const MUSICBRAINZ_BASE = 'https://musicbrainz.org/ws/2';
   // MusicBrainz REQUIRES a descriptive User-Agent and rate-limits ~1 req/sec.
   // GM_info gives the live @version so the UA stays in step with the script.
-  const MB_USER_AGENT = `ITAMEnhancer/${(typeof GM_info !== 'undefined' && GM_info?.script?.version) || '1.3.0'} (https://github.com/Skriptey/Userscripts)`;
+  const MB_USER_AGENT = `ITAMEnhancer/${(typeof GM_info !== 'undefined' && GM_info?.script?.version) || '1.4.0'} (https://github.com/Skriptey/Userscripts)`;
 
   /** Look up a MusicBrainz release MBID by barcode (UPC). Resolves to the MBID
    *  string (preferring an Official release), or null when there are no matches.
@@ -425,14 +468,20 @@
     });
   }
 
+  /** Filename suffix per cover-art kind: static "Cover", and the two motion
+   *  variants "SquareCover" / "VerticalCover" — so files land as
+   *  "<artist> - <album>_<suffix>.<ext>". */
+  const coverSuffix = (kind) =>
+    kind === 'vertical' ? 'VerticalCover' : kind === 'square' ? 'SquareCover' : 'Cover';
+
   /** Download the album's highest-resolution cover art as a file named
-   *  "<artist> - <album>_cover.<ext>". */
+   *  "<artist> - <album>_Cover.<ext>". */
   async function downloadCoverArt(model) {
     const url = maxArtworkUrl(model && model.artwork);
     if (!url) return toast('No cover art found');
     const extMatch = url.split('?')[0].match(/\.(jpe?g|png|webp|tiff?)$/i);
     const ext = (extMatch ? extMatch[1] : 'jpg').toLowerCase();
-    const name = `${safeName(model.artist)} - ${safeName(model.name)}_cover.${ext}`;
+    const name = `${safeName(model.artist)} - ${safeName(model.name)}_${coverSuffix('static')}.${ext}`;
     toast('Downloading cover art…');
     try {
       downloadBlob(await fetchBlob(url), name);
@@ -560,7 +609,10 @@
     toast(`Downloading ${kind} animated cover…`);
     try {
       const blob = await downloadMotionBlob(url, settings.motionRes);
-      downloadBlob(blob, `${safeName(model.artist)} - ${safeName(model.name)}_cover_${kind}.mp4`);
+      downloadBlob(
+        blob,
+        `${safeName(model.artist)} - ${safeName(model.name)}_${coverSuffix(kind)}.mp4`,
+      );
       toast(`${kind[0].toUpperCase() + kind.slice(1)} cover saved ✓`);
     } catch (err) {
       toast(`Failed: ${err.message}`);
@@ -581,9 +633,9 @@
       toast('Building cover-art ZIP…');
       try {
         const zip = new JSZip();
-        if (src.static) zip.file('cover.jpg', await fetchBlob(src.static));
+        if (src.static) zip.file(`${coverSuffix('static')}.jpg`, await fetchBlob(src.static));
         for (const [kind, url] of motions) {
-          zip.file(`cover_${kind}.mp4`, await downloadMotionBlob(url, 'L'));
+          zip.file(`${coverSuffix(kind)}.mp4`, await downloadMotionBlob(url, 'L'));
         }
         downloadBlob(await zip.generateAsync({ type: 'blob' }), `${artist} - ${name}_CoverArt.zip`);
         toast('Cover-art ZIP saved ✓');
@@ -593,11 +645,15 @@
     } else {
       toast(`Saving separately — ${settings.motionRes} is too large to ZIP…`);
       try {
-        if (src.static) downloadBlob(await fetchBlob(src.static), `${artist} - ${name}_cover.jpg`);
+        if (src.static)
+          downloadBlob(
+            await fetchBlob(src.static),
+            `${artist} - ${name}_${coverSuffix('static')}.jpg`,
+          );
         for (const [kind, url] of motions) {
           downloadBlob(
             await downloadMotionBlob(url, settings.motionRes),
-            `${artist} - ${name}_cover_${kind}.mp4`,
+            `${artist} - ${name}_${coverSuffix(kind)}.mp4`,
           );
         }
         toast('Cover art saved (separate files) ✓');
@@ -770,6 +826,14 @@
           composer: t.attributes.composerName,
           isrc: t.attributes.isrc || '',
           releaseDate: t.attributes.releaseDate || '',
+          // Classical metadata: the parent work and the movement within it. Apple
+          // populates these for classical releases (e.g. on Apple Music Classical);
+          // empty for non-classical tracks. The panel surfaces workName as an
+          // optional "Work" column (when classicalInfo is on and any track names a
+          // work); movementName is kept for the Copy-as-JSON export — the track
+          // Title already shows it inline, so it gets no column of its own.
+          workName: t.attributes.workName || '',
+          movementName: t.attributes.movementName || '',
           // Per-track formats (present only with extend=audioTraits). A track
           // CAN differ from the album-level set; the panel flags such tracks.
           audioTraits: t.attributes.audioTraits || [],
@@ -786,6 +850,8 @@
           artist: a.artistName || '',
           isrc: a.isrc || '',
           releaseDate: a.releaseDate || '',
+          workName: a.workName || '',
+          movementName: a.movementName || '',
           audioTraits: a.audioTraits || [],
           formats: formatBadges(a.audioTraits),
         },
@@ -1107,7 +1173,7 @@
       const harmony = el('a', {
         class: 'itam-btn',
         text: 'Look up in Harmony ↗',
-        href: buildHarmonyUrl(location.origin + location.pathname, model.upc),
+        href: buildHarmonyUrl(appleMusicCanonicalUrl(), model.upc),
         target: '_blank',
         rel: 'noopener',
       });
@@ -1138,11 +1204,16 @@
       const showFormatsCol =
         settings.perTrackFormats &&
         model.tracks.some((t) => traitsDiffer(t.audioTraits, model.audioTraits));
+      // "Work" column (classical): shown only when the toggle is on AND at least
+      // one track names its parent work. Cells are blank for tracks without one,
+      // so non-classical releases never grow the column.
+      const showWorkCol = settings.classicalInfo && model.tracks.some((t) => t.workName);
       const table = el('table', { class: 'itam-table' });
       const headRow = el('tr');
       [
         '#',
         'Title',
+        ...(showWorkCol ? ['Work'] : []),
         'Artist',
         ...(hasComposer ? ['Composer'] : []),
         'ISRC',
@@ -1154,6 +1225,9 @@
         const tr = el('tr');
         tr.append(el('td', { text: multiDisc ? `${t.disc}.${t.track}` : String(t.track || '') }));
         tr.append(el('td', { text: t.name }));
+        // Work cell — blank for tracks that don't name a parent work (single-
+        // movement pieces, or non-classical tracks).
+        if (showWorkCol) tr.append(el('td', { text: t.workName || '' }));
         tr.append(el('td', { text: t.artist }));
         if (hasComposer) tr.append(el('td', { text: t.composer || '' }));
         tr.append(
@@ -1187,79 +1261,144 @@
   }
 
   // -------------------------------------------------------------------------
-  //  Section 8 — settings menu
+  //  Section 8 — settings menu (live-updating labels)
   // -------------------------------------------------------------------------
+  //
+  //  LIVE-UPDATING LABELS — userscript-manager menus historically showed a STATIC
+  //  caption, so flipping a setting left its "…: on/off" label stale until the page
+  //  reloaded. Modern Tampermonkey and Violentmonkey fix this: re-registering a
+  //  command with the same `id` updates its caption in place (TM), and VM re-renders
+  //  its menu when commands change. We exploit that by rebuilding every command from
+  //  one declarative list (buildMenu) whenever a setting changes, so labels track
+  //  state live. `autoClose:false` (TM) keeps the menu open after a click so the
+  //  flip is visible immediately. Managers without GM_unregisterMenuCommand (e.g.
+  //  classic Greasemonkey) degrade gracefully — commands register once and labels
+  //  refresh on the next page load, exactly as before. NB the on-page UI itself is
+  //  injected at load, so applying a toggle to what's ALREADY rendered still needs a
+  //  reload; it's the menu label that updates instantly.
 
-  function registerMenu() {
-    // Feature toggles (standard userscript-manager menu commands).
-    GM_registerMenuCommand(`Show audio formats: ${settings.showFormats ? 'on' : 'off'}`, () => {
-      saveSetting('showFormats', !settings.showFormats);
-      toast(`Audio formats ${settings.showFormats ? 'on' : 'off'} (reload to apply)`);
-    });
-    GM_registerMenuCommand(
-      `Show barcodes (UPC) & ISRCs: ${settings.showBarcodeIsrc ? 'on' : 'off'}`,
-      () => {
-        saveSetting('showBarcodeIsrc', !settings.showBarcodeIsrc);
-        toast(`Barcodes & ISRCs ${settings.showBarcodeIsrc ? 'on' : 'off'} (reload to apply)`);
-      },
-    );
-    GM_registerMenuCommand(
-      `Per-track formats column: ${settings.perTrackFormats ? 'on' : 'off'}`,
-      () => {
-        saveSetting('perTrackFormats', !settings.perTrackFormats);
-        toast(
-          `Per-track formats ${settings.perTrackFormats ? 'on' : 'off'} (needs "Show barcodes & ISRCs"; reload)`,
-        );
-      },
-    );
-    GM_registerMenuCommand(`Inline format badges: ${settings.autoBadges ? 'on' : 'off'}`, () => {
-      saveSetting('autoBadges', !settings.autoBadges);
-      toast(
-        `Inline badges ${settings.autoBadges ? 'on' : 'off'} (needs "Show audio formats"; reload)`,
-      );
-    });
-    GM_registerMenuCommand(
-      `Integrate Harmony lookup: ${settings.harmonyLookup ? 'on' : 'off'}`,
-      () => {
-        saveSetting('harmonyLookup', !settings.harmonyLookup);
-        toast(`Harmony lookup ${settings.harmonyLookup ? 'on' : 'off'} (reload to apply)`);
-      },
-    );
-    GM_registerMenuCommand(`Download cover art button: ${settings.coverArt ? 'on' : 'off'}`, () => {
-      saveSetting('coverArt', !settings.coverArt);
-      toast(`Cover-art button ${settings.coverArt ? 'on' : 'off'} (reload to apply)`);
-    });
-    // Prompt (not a click-to-cycle), because Tampermonkey can't live-update a
-    // menu label, so cycling looked dead. Mirrors the "Locale override" pattern.
-    GM_registerMenuCommand(`Animated cover-art resolution: ${settings.motionRes}`, () => {
-      const v = window.prompt(
-        'Animated cover-art resolution — enter L (1080), XL (2160), or Max (highest):',
-        settings.motionRes,
-      );
-      if (v === null) return; // cancelled
-      const choice = { l: 'L', xl: 'XL', max: 'Max' }[v.trim().toLowerCase()];
-      if (!choice) return; // invalid input — ignore, keep current
-      saveSetting('motionRes', choice);
-      toast(`Resolution: ${choice} — L=1080, XL=2160, Max=highest (≫ size at XL/Max)`);
-    });
-    GM_registerMenuCommand(
-      `Locale override (current: ${settings.locale || 'storefront default'})`,
-      () => {
-        const v = window.prompt(
-          'Apple Music locale (e.g. en-US, ja-JP) — blank = storefront default:',
-          settings.locale,
-        );
-        if (v !== null) saveSetting('locale', v.trim());
-      },
-    );
-    GM_registerMenuCommand('Clear cached Apple Music token', () => {
-      try {
-        GM_setValue(TOKEN_KEY, null);
-      } catch {
-        /* ignore */
+  const canRefreshMenu = typeof GM_unregisterMenuCommand === 'function';
+  let menuCmdIds = []; // ids of the currently-registered commands, for teardown
+  let menuBuilt = false;
+
+  /** (Re)register one command and return its id. Passing the options object
+   *  (stable `id` + `autoClose:false`) is what lets Tampermonkey update a caption
+   *  in place and keep the menu open after a click; managers that reject the object
+   *  fall back to a plain registration (still works — just no live caption refresh). */
+  function addMenuCommand(id, label, onClick) {
+    try {
+      return GM_registerMenuCommand(label, onClick, { id, autoClose: false });
+    } catch {
+      return GM_registerMenuCommand(label, onClick) ?? id;
+    }
+  }
+
+  /** Rebuild the whole menu so every label reflects the current settings. When the
+   *  manager can remove commands we tear the previous set down first (so nothing
+   *  duplicates); when it can't, we build exactly once and let labels refresh on the
+   *  next reload. */
+  function rebuildMenu() {
+    if (canRefreshMenu) {
+      for (const id of menuCmdIds) {
+        try {
+          GM_unregisterMenuCommand(id);
+        } catch {
+          /* ignore */
+        }
       }
-      toast('Token cache cleared');
-    });
+    } else if (menuBuilt) {
+      return; // can't unregister → don't pile up duplicate commands
+    }
+    menuCmdIds = buildMenu();
+    menuBuilt = true;
+  }
+
+  /** Flip a boolean setting, repaint the menu so its label updates live, and confirm
+   *  with a toast. The badges/columns/buttons are injected at page load, so a reload
+   *  is still needed to apply the change to what's already on screen. */
+  function toggleSetting(key, label, dependsOn) {
+    saveSetting(key, !settings[key]);
+    rebuildMenu(); // live label refresh
+    toast(
+      `${label} ${settings[key] ? 'on' : 'off'} — reload to apply${dependsOn ? ` (needs "${dependsOn}")` : ''}`,
+    );
+  }
+
+  /** Register every command from the CURRENT settings and return their ids (so the
+   *  next rebuild can tear them down). Labels are computed here, so each rebuild
+   *  re-evaluates them against the latest settings — that's what keeps them live. */
+  function buildMenu() {
+    const on = (v) => (v ? 'on' : 'off');
+    return [
+      addMenuCommand('showFormats', `Show audio formats: ${on(settings.showFormats)}`, () =>
+        toggleSetting('showFormats', 'Audio formats'),
+      ),
+      addMenuCommand(
+        'showBarcodeIsrc',
+        `Show barcodes (UPC) & ISRCs: ${on(settings.showBarcodeIsrc)}`,
+        () => toggleSetting('showBarcodeIsrc', 'Barcodes & ISRCs'),
+      ),
+      addMenuCommand(
+        'perTrackFormats',
+        `Per-track formats column: ${on(settings.perTrackFormats)}`,
+        () => toggleSetting('perTrackFormats', 'Per-track formats', 'Show barcodes (UPC) & ISRCs'),
+      ),
+      addMenuCommand('classicalInfo', `Classical Work column: ${on(settings.classicalInfo)}`, () =>
+        toggleSetting('classicalInfo', 'Classical Work column', 'Show barcodes (UPC) & ISRCs'),
+      ),
+      addMenuCommand('autoBadges', `Inline format badges: ${on(settings.autoBadges)}`, () =>
+        toggleSetting('autoBadges', 'Inline badges', 'Show audio formats'),
+      ),
+      addMenuCommand(
+        'harmonyLookup',
+        `Integrate Harmony lookup: ${on(settings.harmonyLookup)}`,
+        () => toggleSetting('harmonyLookup', 'Harmony lookup'),
+      ),
+      addMenuCommand('coverArt', `Download cover art button: ${on(settings.coverArt)}`, () =>
+        toggleSetting('coverArt', 'Cover-art button'),
+      ),
+      // Prompt items: the label now refreshes live once you choose, so the new value
+      // shows without reopening the menu (this is what used to "look dead").
+      addMenuCommand('motionRes', `Animated cover-art resolution: ${settings.motionRes}`, () => {
+        const v = window.prompt(
+          'Animated cover-art resolution — enter L (1080), XL (2160), or Max (highest):',
+          settings.motionRes,
+        );
+        if (v === null) return; // cancelled
+        const choice = { l: 'L', xl: 'XL', max: 'Max' }[v.trim().toLowerCase()];
+        if (!choice) return; // invalid input — ignore, keep current
+        saveSetting('motionRes', choice);
+        rebuildMenu();
+        toast(`Resolution: ${choice} — L=1080, XL=2160, Max=highest (≫ size at XL/Max)`);
+      }),
+      addMenuCommand(
+        'locale',
+        `Locale override (current: ${settings.locale || 'storefront default'})`,
+        () => {
+          const v = window.prompt(
+            'Apple Music locale (e.g. en-US, ja-JP) — blank = storefront default:',
+            settings.locale,
+          );
+          if (v === null) return;
+          saveSetting('locale', v.trim());
+          rebuildMenu();
+          toast(`Locale: ${settings.locale || 'storefront default'} — reload to apply`);
+        },
+      ),
+      addMenuCommand('clearToken', 'Clear cached Apple Music token', () => {
+        try {
+          GM_setValue(TOKEN_KEY, null);
+        } catch {
+          /* ignore */
+        }
+        toast('Token cache cleared');
+      }),
+    ];
+  }
+
+  /** Build the menu for the first time; later refreshes go through rebuildMenu(). */
+  function registerMenu() {
+    rebuildMenu();
   }
 
   // -------------------------------------------------------------------------

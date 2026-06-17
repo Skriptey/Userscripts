@@ -1,11 +1,15 @@
 # ITAM Enhancer
 
 **iTunes / Apple Music Enhancer** — on [music.apple.com](https://music.apple.com)
-album, song and music-video pages it surfaces the data the web player already
-has but doesn't show: **available audio formats**, the **barcode (UPC)**, and
-**per-track ISRCs** — with one-click copy and a [MagicISRC](https://magicisrc.kepstin.ca/)
-link. It also adds **inline album-header buttons**, a **[Harmony](https://harmony.pulsewidth.org.uk/)
-cross-service lookup**, and **cover-art download**.
+**and [Apple Music Classical](https://classical.music.apple.com)**
+(`classical.music.apple.com`) album, song and music-video pages it surfaces the
+data the web player already has but doesn't show: **available audio formats**, the
+**barcode (UPC)**, and **per-track ISRCs** — with one-click copy and a
+[MagicISRC](https://magicisrc.kepstin.ca/) link. It also adds **inline
+album-header buttons**, a **[Harmony](https://harmony.pulsewidth.org.uk/)
+cross-service lookup**, **cover-art download**, and — for classical releases — an
+optional per-track **Work** column. Old `itunes.apple.com` links need nothing
+special: Apple redirects them to `music.apple.com`, where the script runs.
 
 ## Install
 
@@ -29,6 +33,11 @@ cross-service lookup**, and **cover-art download**.
   track table adds a **Formats** column that shows badges only for the tracks that
   **differ** from the album-level set (blank when identical); the column appears
   only when at least one track differs. Toggle with **Per-track formats column**.
+- **Classical Work column** — classical releases (e.g. on **Apple Music
+  Classical**) name each track's parent **work**; the panel's track table adds a
+  **Work** column showing it. The column appears only when at least one track names
+  a work, and individual cells are blank for tracks without one — so non-classical
+  albums never grow the column. Toggle with **Classical Work column**.
 - **Details panel** — a floating **“ITAM ▾”** button (bottom-right) opens a panel
   with: formats, **barcode (UPC)**, record label, copyright, release date,
   Mastered-for-iTunes, and a **track table with ISRCs** (plus the cover-art and
@@ -47,36 +56,46 @@ cross-service lookup**, and **cover-art download**.
   release lookup for the album with the main providers pre-selected and the
   album's UPC pre-filled (album pages).
 - **Cover-art download** — saves the **highest-resolution** static cover as
-  `<artist> - <album>_cover.jpg`. When the album has **animated (motion)
+  `<artist> - <album>_Cover.jpg`. When the album has **animated (motion)
   artwork**, the button becomes a dropdown — **Static**, **Square animated**,
   **Vertical animated**, or **All**. Animated covers download as `.mp4`
-  (Apple serves them as unencrypted fMP4 over HLS). **All** bundles everything
-  into `<artist> - <album>_CoverArt.zip` at the **L** resolution; at **XL/Max**
-  the (huge) animated files save separately instead of zipping. Resolution is
-  set via the **Animated cover-art resolution** menu item (**L** 1080 ·
-  **XL** 2160 · **Max** highest).
-- Works on **album**, **song**, and **music-video** pages, across all storefronts,
-  and follows Apple Music's in-app (single-page) navigation. The floating
-  launcher is always available as a fallback if Apple's layout shifts.
+  (`<artist> - <album>_SquareCover.mp4` / `…_VerticalCover.mp4`; Apple serves them
+  as unencrypted fMP4 over HLS). **All** bundles everything into
+  `<artist> - <album>_CoverArt.zip` at the **L** resolution; at **XL/Max** the
+  (huge) animated files save separately instead of zipping. Resolution is set via
+  the **Animated cover-art resolution** menu item (**L** 1080 · **XL** 2160 ·
+  **Max** highest).
+- Works on **album**, **song**, and **music-video** pages on both
+  **music.apple.com** and **classical.music.apple.com** (Apple Music Classical),
+  across all storefronts, and follows the in-app (single-page) navigation. The
+  floating launcher is always available as a fallback if Apple's layout shifts.
+  Legacy **`itunes.apple.com`** links are not matched directly — Apple
+  301-redirects them to `music.apple.com` before the page loads, so they're
+  already covered.
 
 ## Settings
 
 Open your userscript manager's menu (its toolbar icon, on an Apple Music page):
 
-| Setting                        | Default            | Notes                                                                                                                |
-| ------------------------------ | ------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| Show audio formats             | `on`               | Master toggle for the format badges (inline + in the panel).                                                         |
-| Show barcodes (UPC) & ISRCs    | `on`               | Master toggle for the barcode + per-track ISRC section (and the header button).                                      |
-| Per-track formats column       | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Formats** column for tracks that differ from the album-level set. |
-| Inline format badges           | `on`               | Sub-option of _Show audio formats_: also inject badges near the album title.                                         |
-| Integrate Harmony lookup       | `on`               | The **Harmony ↗** header/panel button (album cross-service lookup).                                                  |
-| Download cover art button      | `on`               | The **Download cover art** header/panel control (static + animated dropdown).                                        |
-| Animated cover-art resolution  | `L`                | Prompts for **L** (1080), **XL** (2160), or **Max** (highest). XL/Max are very large.                                |
-| Locale override                | storefront default | Apple Music locale (e.g. `en-US`, `ja-JP`) for the API.                                                              |
-| Clear cached Apple Music token | —                  | Forget the cached catalog credential (re-captured on next use).                                                      |
+| Setting                        | Default            | Notes                                                                                                                           |
+| ------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Show audio formats             | `on`               | Master toggle for the format badges (inline + in the panel).                                                                    |
+| Show barcodes (UPC) & ISRCs    | `on`               | Master toggle for the barcode + per-track ISRC section (and the header button).                                                 |
+| Per-track formats column       | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Formats** column for tracks that differ from the album-level set.            |
+| Classical Work column          | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Work** column for classical releases (shown only when a track names a work). |
+| Inline format badges           | `on`               | Sub-option of _Show audio formats_: also inject badges near the album title.                                                    |
+| Integrate Harmony lookup       | `on`               | The **Harmony ↗** header/panel button (album cross-service lookup).                                                             |
+| Download cover art button      | `on`               | The **Download cover art** header/panel control (static + animated dropdown).                                                   |
+| Animated cover-art resolution  | `L`                | Prompts for **L** (1080), **XL** (2160), or **Max** (highest). XL/Max are very large.                                           |
+| Locale override                | storefront default | Apple Music locale (e.g. `en-US`, `ja-JP`) for the API.                                                                         |
+| Clear cached Apple Music token | —                  | Forget the cached catalog credential (re-captured on next use).                                                                 |
 
 Each feature set can be turned on/off independently from the userscript manager's
-menu; the panel and badges render only the enabled sets.
+menu; the panel and badges render only the enabled sets. In current Tampermonkey
+and Violentmonkey the menu **labels update live** the instant you toggle (the
+`…: on/off` caption flips without reopening the menu) — older managers refresh the
+label on the next page load. Either way, the on-page UI is injected at load, so
+**reload the page** to apply a change to what's already on screen.
 
 ## How it works (for maintainers)
 
@@ -143,7 +162,9 @@ reused):
   `mzstatic.com` (static cover art), `itunes.apple.com` (animated-artwork HLS on
   `mvod.itunes.apple.com`), and `musicbrainz.org` (the barcode→MBID lookup for
   MagicISRC, made **only when you click** Submit to MagicISRC). The app bundle is
-  fetched same-origin; the Harmony button opens a URL (no fetch).
+  fetched same-origin; the Harmony button opens a URL (no fetch). **Apple Music
+  Classical** (`classical.music.apple.com`) reads the **same** catalog API from the
+  same hosts — adding that `@match` introduces no new cross-origin endpoint.
 - **`@require`:** [JSZip 3.10.1](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js)
   from cdnjs (pinned, immutable versioned URL) — only used to bundle the "All"
   cover-art ZIP. No remote code is fetched at runtime.

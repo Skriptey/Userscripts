@@ -32,6 +32,24 @@ never paste or enter anything.
 One call to Apple's catalog API returns `audioTraits` (formats), `upc` (barcode)
 and per-track `isrc` — the same data the player has, just surfaced.
 
+**Q. Does it work on Apple Music Classical?**
+Yes. **Apple Music Classical** (`classical.music.apple.com`) is the same web stack
+on the same catalog, so everything works there too — formats, barcode, ISRCs,
+cover art and all. Classical releases also name each track's parent **work**, so
+the panel adds an extra **Work** column (turn it off with **Classical Work
+column** in the menu).
+
+**Q. What about old `itunes.apple.com` links?**
+They just work — you don't need to do anything. Apple redirects every legacy
+iTunes Store / iTunes Preview music link to `music.apple.com` before the page
+loads, so you land on Apple Music, where the script runs.
+
+**Q. What's the "Work" column in the track table?**
+On classical releases each track belongs to a larger **work** (e.g. a symphony or
+opera act); the **Work** column shows it so you can see the grouping at a glance.
+It only appears when at least one track names a work, and rows without one stay
+blank — so ordinary pop/rock albums never show it.
+
 **Q. Why do some tracks show their own formats in the panel?**
 A track can carry formats the album-level set doesn't — e.g. a single Dolby Atmos
 or Spatial Audio track on an album that's otherwise stereo. When that happens, the
@@ -50,9 +68,17 @@ use the **Harmony** button to match or add the release first — it won't open
 MagicISRC blank. The MusicBrainz lookup happens only when you click the button.
 
 **Q. The "Animated cover-art resolution" menu item looked like it did nothing.**
-It used to cycle L → XL → Max on each click, but userscript managers can't refresh
-a menu label live, so it looked stuck. It now opens a small **prompt** — type
-`L`, `XL`, or `Max` (1080 / 2160 / highest) and it saves your choice.
+It opens a small **prompt** — type `L`, `XL`, or `Max` (1080 / 2160 / highest) and
+it saves your choice. In current Tampermonkey/Violentmonkey the menu label now also
+updates live to show the value you picked (older managers refresh it on the next
+page load).
+
+**Q. Do the settings-menu toggles update live now?**
+Yes. In current Tampermonkey and Violentmonkey each toggle flips its `…: on/off`
+label immediately — the menu even stays open, so you can flip several in a row.
+Managers without live-menu support refresh the labels on the next page load. The
+on-page badges/columns/buttons are added when the page loads, so **reload** to
+apply a toggle to what's already on screen.
 
 **Q. The badges didn't appear on an album.**
 Apple Music's layout class names change often, so inline badge placement is
@@ -73,12 +99,13 @@ stronger match. Toggle it with "Integrate Harmony lookup".
 
 **Q. What quality is the downloaded cover art?**
 Static art is the highest resolution Apple exposes (the artwork's native
-dimensions), saved as `<artist> - <album>_cover.jpg`.
+dimensions), saved as `<artist> - <album>_Cover.jpg`.
 
 **Q. Can I download animated (motion) cover art?**
 Yes — when an album has it, the **Download cover art** button becomes a dropdown:
 **Static**, **Square animated**, **Vertical animated**, or **All**. Animated
-covers save as `.mp4`. **All** bundles them into `<artist> - <album>_CoverArt.zip`
+covers save as `.mp4` (`<artist> - <album>_SquareCover.mp4` /
+`…_VerticalCover.mp4`). **All** bundles them into `<artist> - <album>_CoverArt.zip`
 (at the L resolution). Pick the resolution with the **Animated cover-art
 resolution** menu item — **L** (1080) / **XL** (2160) / **Max** (highest); note
 XL and Max are **very large** (hundreds of MB), so at those sizes the animated

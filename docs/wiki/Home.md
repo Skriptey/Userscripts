@@ -17,10 +17,10 @@ every line first.
 
 ## Scripts
 
-| Script                            | What it does                                                                                                                                                         | Docs                                       |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| **[BunkrDL](BunkrDL)**            | Bulk-download Bunkr albums & balbums.st listings into size-capped ZIPs, rate-limited.                                                                                | [BunkrDL](BunkrDL) · [FAQ](FAQ)            |
-| **[ITAM Enhancer](ITAMenhancer)** | Apple Music: audio formats, barcodes (UPC) & per-track ISRCs (copy + MagicISRC), plus inline header buttons, a Harmony cross-service lookup, and cover-art download. | [ITAM Enhancer](ITAMenhancer) · [FAQ](FAQ) |
+| Script                            | What it does                                                                                                                                                                                                          | Docs                                       |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| **[BunkrDL](BunkrDL)**            | Bulk-download Bunkr albums & balbums.st listings into size-capped ZIPs, rate-limited.                                                                                                                                 | [BunkrDL](BunkrDL) · [FAQ](FAQ)            |
+| **[ITAM Enhancer](ITAMenhancer)** | Apple Music & Apple Music Classical: audio formats, barcodes (UPC) & per-track ISRCs (copy + MagicISRC), plus inline header buttons, a Harmony cross-service lookup, cover-art download, and a classical Work column. | [ITAM Enhancer](ITAMenhancer) · [FAQ](FAQ) |
 
 ## Help
 
