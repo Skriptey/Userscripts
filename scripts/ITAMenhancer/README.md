@@ -70,18 +70,24 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   **Max** highest).
 - **Download Lyrics** _(requires being logged in to Apple Music)_ — pick a
   preferred tier from the dropdown: **Word-by-Word** (Apple Music “Sing”, enhanced
-  “A2” `.lrc`), **Line-by-Line** (standard `.lrc`), or **Static** (plain `.txt`).
-  **Each track automatically falls back** to the next-best format it actually has —
-  **Word-by-Word → Line-by-Line → Static** (and **Line-by-Line → Static**) — so a
-  release where only some tracks have “Sing” lyrics still downloads complete; the
-  toast notes if any tracks fell back. An album bundles every track into a ZIP with
-  files named `<disc> - <track> - <title>.<ext>`; a single song saves one file.
-  Tracks with no lyrics are skipped, a single bad track can’t abort the rest, and
-  any failure is surfaced as a toast (never a silent no-op). The button is
-  **hidden when nothing is downloadable**. Lyrics come from Apple’s
-  `syllable-lyrics`/`lyrics` TTML and need your **logged-in subscription**; they are
-  licensed content, so this is for **personal use** only. Toggle with **Download
-  Lyrics button**.
+  “A2” `.lrc` — which **does** embed per-word timestamps), **Line-by-Line**
+  (standard `.lrc`), or **Static** (plain `.txt`). **Each track automatically falls
+  back** to the next-best format it actually has — **Word-by-Word → Line-by-Line →
+  Static** (and **Line-by-Line → Static**) — so a release where only some tracks
+  have “Sing” lyrics still downloads complete; the toast notes if any tracks fell
+  back, and the console logs a per-tier tally (`word=… line=… static=…`).
+  **Word-by-Word also saves Apple’s raw `.ttml` source** next to each `.lrc` — the
+  lossless word-by-word original, so a genuinely word-synced track is never reduced
+  to just an LRC. Multiple files (an album, or one word-synced song = `.lrc` +
+  `.ttml`) bundle into a ZIP with names `<disc> - <track> - <title>.<ext>`; a lone
+  file downloads directly. If the ZIP build ever stalls, each file is saved
+  individually instead so the lyrics are never lost. Tracks with no lyrics are
+  skipped, a single bad track can’t abort the rest, and any failure is surfaced as a
+  toast (never a silent no-op). The button is **hidden when nothing is
+  downloadable**. Lyrics come from Apple’s `syllable-lyrics`/`lyrics` TTML (read
+  with `extend=ttmlLocalizations` so word-timed data stored there isn’t missed) and
+  need your **logged-in subscription**; they are licensed content, so this is for
+  **personal use** only. Toggle with **Download Lyrics button**.
 - **Find ISWCs** — Apple gives writers but **no ISWC**, so on an explicit click this
   looks each track's **ISWC** (the work code, the composition counterpart of an ISRC)
   up from **[MusicBrainz](https://musicbrainz.org/)** (primary — also gives the work's

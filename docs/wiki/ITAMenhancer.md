@@ -50,13 +50,17 @@ covered automatically (Apple redirects them to Apple Music).
   **All** → a `<artist> - <album>_CoverArt.zip` at the L resolution. Resolution is
   set via **Animated cover-art resolution** (L 1080 / XL 2160 / Max highest).
 - **Download Lyrics** _(logged-in only)_ — pick a preferred tier: **Word-by-Word**
-  (Apple Music “Sing” → enhanced/“A2” `.lrc`), **Line-by-Line** (`.lrc`), or
-  **Static** (`.txt`). Each track **falls back automatically** to the next-best
-  format it has (Word-by-Word → Line-by-Line → Static; Line-by-Line → Static), so a
-  release where only some tracks are word-synced still downloads complete. An album
-  bundles every track into a ZIP named `<disc> - <track> - <title>.<ext>`; a single
-  song saves one file. The button is **hidden when nothing is downloadable**. Lyrics
-  are licensed content — **personal use** only.
+  (Apple Music “Sing” → enhanced/“A2” `.lrc`, which **does** carry per-word
+  timestamps), **Line-by-Line** (`.lrc`), or **Static** (`.txt`). Each track **falls
+  back automatically** to the next-best format it has (Word-by-Word → Line-by-Line →
+  Static; Line-by-Line → Static), so a release where only some tracks are word-synced
+  still downloads complete (the console logs a per-tier tally). **Word-by-Word also
+  saves Apple’s raw `.ttml` source** beside each `.lrc` — the lossless word-by-word
+  original. Multiple files (an album, or one word-synced song = `.lrc` + `.ttml`) are
+  zipped (`<disc> - <track> - <title>.<ext>`); a lone file downloads directly, and if
+  the zip ever stalls the files are saved individually instead. The button is
+  **hidden when nothing is downloadable**. Lyrics are licensed content — **personal
+  use** only.
 - **Find ISWCs** — Apple gives writers but no ISWC, so on click this looks each track's
   **ISWC** up from **MusicBrainz** (+ a **credits.fm** gap-fill) and shows ranked
   candidates with a **confidence** and **source**, one-click copy, and a **“Seed MB ↗”**

@@ -115,11 +115,13 @@ files download separately instead of zipping.
 Yes — when you're **logged in to Apple Music**, the **Download Lyrics** button (in the
 header and the panel) offers whatever the release actually has: **Word-by-Word** (Apple
 Music “Sing”), **Line-by-Line** (time-synced), and **Static** (plain text). Word and
-line save as `.lrc` (word-by-word as enhanced “A2” LRC), static as `.txt`. An album
-bundles every track into a ZIP with files named `<disc> - <track> - <title>.<ext>`; a
-single song saves one file. If you're not logged in, or the release has no lyrics, the
-button isn't shown. Lyrics need your **logged-in subscription** (Apple gates them behind
-your account) and are licensed content, so the export is for **personal use** only.
+line save as `.lrc` (word-by-word as enhanced “A2” LRC), static as `.txt`; **Word-by-Word
+also saves Apple’s raw `.ttml` source** beside each `.lrc` (see the next question).
+Multiple files (an album, or one word-synced song = `.lrc` + `.ttml`) bundle into a ZIP
+named `<disc> - <track> - <title>.<ext>`; a lone file downloads directly. If you're not
+logged in, or the release has no lyrics, the button isn't shown. Lyrics need your
+**logged-in subscription** (Apple gates them behind your account) and are licensed
+content, so the export is for **personal use** only.
 
 **Q. The Download Lyrics button isn't showing.**
 It only appears when you're **logged in to Apple Music** _and_ the release has lyrics
@@ -134,6 +136,16 @@ where only some tracks have “Sing” lyrics still downloads complete — word-
 available, line-synced or plain text otherwise. The confirmation toast tells you if any
 tracks fell back. Tracks with no lyrics at all are skipped, and any error is shown as a
 toast (so a download can't silently do nothing).
+
+**Q. Does choosing Word-by-Word ever lose the word-by-word timing?**
+No. The Word-by-Word `.lrc` is an **enhanced “A2” LRC** that embeds a timestamp **per
+word** (`[mm:ss.xx]<mm:ss.xx>word <mm:ss.xx>word …`), so the word timing is preserved —
+not just line timing. As a belt-and-braces guard, Word-by-Word **also saves Apple's raw
+`.ttml` source** next to each `.lrc`: that's the exact, lossless word-synced original. A
+track only “drops” to line timing when Apple genuinely has no word data for it — and the
+console prints a per-track tally (`word=… line=… static=…`) so you can see exactly which
+got what. ITAM also reads Apple's `ttmlLocalizations` field (not just `ttml`), so
+word-timed lyrics stored there aren't missed.
 
 **Q. Download Lyrics shows “Fetching…” then nothing happens — no file, no message.**
 It should always end in a toast now (“Lyrics saved ✓”, “No lyrics returned…”, or an

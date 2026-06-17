@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.2
+// @version       1.7.4
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -1073,8 +1073,13 @@
   /** GET a song's lyrics TTML for one kind ('syllable-lyrics' | 'lyrics'); null when
    *  unavailable (logged out, or the song lacks that lyric type → amp-api 404). */
   async function fetchLyricsTtml(country, songId, kind, devToken, userToken) {
-    const qs = settings.locale ? `?l=${encodeURIComponent(settings.locale)}` : '';
-    const path = `/v1/catalog/${country}/songs/${songId}/${kind}${qs}`;
+    // Request ttmlLocalizations too: some songs carry their (often word-timed) TTML
+    // there rather than in `ttml`, so without this they parse as line-only or empty
+    // and a word-by-word track silently downgrades. (Confirmed against the web
+    // player + several OSS Apple-Music lyrics clients.)
+    const params = new URLSearchParams({ extend: 'ttmlLocalizations' });
+    if (settings.locale) params.set('l', settings.locale);
+    const path = `/v1/catalog/${country}/songs/${songId}/${kind}?${params}`;
     let json;
     try {
       // Diagnostic: the request URL — logged BEFORE the request so it's visible
@@ -1089,9 +1094,14 @@
       console.warn(`[ITAM] lyrics ${kind} ${songId}: ${err.status || err.message}`);
       return null;
     }
-    const attrs = json && json.data && json.data[0] && json.data[0].attributes;
-    const ttml = attrs && attrs.ttml;
-    if (typeof ttml === 'string' && ttml) {
+    const attrs = (json && json.data && json.data[0] && json.data[0].attributes) || null;
+    // Prefer `ttml`; fall back to `ttmlLocalizations`. Accept only a non-empty
+    // STRING — either field can be absent or a non-string on some responses.
+    const ttml =
+      (attrs && typeof attrs.ttml === 'string' && attrs.ttml) ||
+      (attrs && typeof attrs.ttmlLocalizations === 'string' && attrs.ttmlLocalizations) ||
+      '';
+    if (ttml) {
       console.log(`[ITAM] lyrics ${kind} ${songId}: ok (${ttml.length} chars of TTML)`);
       return ttml;
     }
@@ -1109,13 +1119,16 @@
    *    line  → static
    *    static
    *  (the preferred format is whatever was picked from the Download Lyrics menu.)
-   *  Returns { text, ext, kind } — `kind` is the format actually produced
-   *  ('word'|'line'|'static') — or null when the track has no lyrics at all. */
+   *  Returns { text, ext, kind, ttml } — `kind` is the format actually produced
+   *  ('word'|'line'|'static'), `ttml` is the RAW Apple TTML of the richest parse
+   *  (so the caller can also save the lossless source) — or null when the track
+   *  has no lyrics at all. */
   async function trackLyrics(country, songId, tier, devToken, userToken) {
     // syllable-lyrics carries WORD timing; lyrics carries LINE timing + the text
     // (and is the static source). Only fetch the word endpoint when it's wanted.
     const kinds = tier === 'word' ? ['syllable-lyrics', 'lyrics'] : ['lyrics'];
     let best = null; // richest parse seen (prefer the word-timed one)
+    let bestTtml = null; // the RAW TTML behind that parse — the lossless source
     for (const kind of kinds) {
       const ttml = await fetchLyricsTtml(country, songId, kind, devToken, userToken);
       if (!ttml) continue;
@@ -1128,17 +1141,21 @@
         !best ||
         (parsed.wordTimed && !best.wordTimed) ||
         (!best.wordTimed && !best.lineTimed && parsed.lineTimed)
-      )
+      ) {
         best = parsed;
+        bestTtml = ttml;
+      }
       if (parsed.wordTimed) break; // already the richest form — stop early
     }
     if (!best || !best.lines.length) return null;
     // Step down from the requested tier to whatever the data actually supports.
+    // `ttml` rides along so Word-by-Word can ALSO save Apple's exact source — the
+    // enhanced LRC encodes per-word timing, but the raw TTML is the lossless guard.
     if (tier === 'word' && best.wordTimed)
-      return { text: lyricsToWordLrc(best), ext: 'lrc', kind: 'word' };
+      return { text: lyricsToWordLrc(best), ext: 'lrc', kind: 'word', ttml: bestTtml };
     if (tier !== 'static' && best.lineTimed)
-      return { text: lyricsToLineLrc(best), ext: 'lrc', kind: 'line' };
-    return { text: lyricsToPlain(best), ext: 'txt', kind: 'static' };
+      return { text: lyricsToLineLrc(best), ext: 'lrc', kind: 'line', ttml: bestTtml };
+    return { text: lyricsToPlain(best), ext: 'txt', kind: 'static', ttml: bestTtml };
   }
 
   /** "<disc> - <NN> - <title>" filename stem (track number zero-padded). */
@@ -1163,13 +1180,16 @@
 
   const TIER_RANK = { word: 3, line: 2, static: 1 };
 
-  /** Download the entity's lyrics in `tier` ('word'|'line'|'static'). Album → a ZIP
-   *  of per-track files; single song → one file. Each track independently falls
-   *  back to the next-best format it has (see trackLyrics), and tracks with no
-   *  lyrics are skipped. Per-track failures are isolated, and EVERY outcome ends
-   *  in a toast — so a single bad track (or any error) can never fail silently,
-   *  which is what made an earlier word-by-word download "do nothing".
-   *  Requires a logged-in subscriber session (the endpoints need the user token). */
+  /** Download the entity's lyrics in `tier` ('word'|'line'|'static'). Multiple
+   *  files (an album, or one Word-by-Word song that yields .lrc + .ttml) → a ZIP;
+   *  a lone file → a direct download. Word-by-Word ALSO saves Apple's raw .ttml
+   *  alongside the enhanced .lrc, so a genuinely word-synced track keeps its
+   *  lossless source. Each track independently falls back to the next-best format
+   *  it has (see trackLyrics), tracks with no lyrics are skipped, per-track
+   *  failures are isolated, and EVERY outcome ends in a toast — so a single bad
+   *  track (or any error) can never fail silently (an earlier word-by-word download
+   *  "did nothing"). Requires a logged-in subscriber session (endpoints need the
+   *  user token). */
   async function downloadLyrics(model, tier) {
     const tierLabel = { word: 'word-by-word', line: 'line-by-line', static: 'static' }[tier];
     try {
@@ -1205,21 +1225,59 @@
       if (!out.length) return toast('No lyrics returned for this release (see console for status)');
       const note = fellBack.size ? ` (some fell back to ${[...fellBack].sort().join(' / ')})` : '';
 
-      if (model.kind !== 'album' || out.length === 1) {
-        const r = out[0];
-        downloadBlob(
-          new Blob([r.text], { type: 'text/plain;charset=utf-8' }),
-          `${lyricsFileStem(r.t)}.${r.ext}`,
-        );
+      // Per-track visibility: how many got each timing tier, so a word→line
+      // downgrade is observable rather than silent. (Counts only — never lyrics.)
+      const tally = out.reduce((m, r) => ((m[r.kind] = (m[r.kind] || 0) + 1), m), {});
+      console.log(
+        `[ITAM] lyrics: ${out.length}/${tracks.length} tracks — ` +
+          `word=${tally.word || 0} line=${tally.line || 0} static=${tally.static || 0}`,
+      );
+
+      // Build the output file list. Word-by-Word ALSO saves Apple's RAW .ttml per
+      // track (the lossless source) next to the playable enhanced .lrc, so a track
+      // that really is word-synced is never reduced to just an LRC.
+      const files = [];
+      for (const r of out) {
+        const stem = lyricsFileStem(r.t);
+        files.push({ name: `${stem}.${r.ext}`, text: r.text });
+        if (tier === 'word' && r.ttml) files.push({ name: `${stem}.ttml`, text: r.ttml });
+      }
+
+      const saveFile = (f) =>
+        downloadBlob(new Blob([f.text], { type: 'text/plain;charset=utf-8' }), f.name);
+
+      // A lone file (e.g. a single line-only song) downloads directly; anything
+      // multi-file (an album, or one word-synced song = .lrc + .ttml) is zipped.
+      if (files.length === 1) {
+        saveFile(files[0]);
         return toast(`Lyrics saved ✓${note}`);
       }
       const zip = new JSZip();
-      for (const r of out) zip.file(`${lyricsFileStem(r.t)}.${r.ext}`, r.text);
+      for (const f of files) zip.file(f.name, f.text);
       const tag = tierLabel.replace(/[^a-z]/gi, '');
-      downloadBlob(
-        await zip.generateAsync({ type: 'blob' }),
-        `${safeName(model.artist)} - ${safeName(model.name)}_Lyrics_${tag}.zip`,
-      );
+      // The ZIP build is the ONLY async step after the (now-working) fetches, so a
+      // stall here is what made the lyrics "fetch everything, then nothing happens":
+      // an unbounded await with no error. NEVER lose the lyrics — race the build
+      // against a watchdog and fall back to saving each file individually.
+      console.log(`[ITAM] lyrics: zipping ${files.length} file(s)…`);
+      const saveIndividually = (why) => {
+        console.warn(
+          `[ITAM] lyrics: ZIP build ${why}; saving ${files.length} file(s) individually instead`,
+        );
+        for (const f of files) saveFile(f);
+        toast(`Lyrics saved as ${files.length} files${note}`);
+      };
+      let blob;
+      try {
+        blob = await Promise.race([
+          zip.generateAsync({ type: 'blob' }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), 20000)),
+        ]);
+      } catch (zipErr) {
+        return saveIndividually(zipErr.message);
+      }
+      console.log(`[ITAM] lyrics: zip ready (${blob.size} bytes), saving`);
+      downloadBlob(blob, `${safeName(model.artist)} - ${safeName(model.name)}_Lyrics_${tag}.zip`);
       toast(`Lyrics ZIP saved (${out.length} of ${tracks.length} tracks)${note} ✓`);
     } catch (err) {
       toast(`Lyrics failed: ${err.message}`);
@@ -1747,10 +1805,32 @@
         if ((h.textContent || '').trim().toLowerCase().includes(needle)) return h;
       }
     }
+    // Apple Music does NOT always render the album title as an h1/h2/[role=heading]
+    // — on some layouts it's a styled <span>/<div>, so the heading search above
+    // finds nothing and the inline badges/buttons never place (while the panel,
+    // which doesn't need an anchor, still works). Fall back to the most SPECIFIC
+    // element (fewest descendants) in <main> whose own text IS the title, so the
+    // badges still land next to the visible title.
+    if (needle && main) {
+      const cands = [...main.querySelectorAll('span, div, a, p')].filter((e) => {
+        const t = (e.textContent || '').trim().toLowerCase();
+        return t.startsWith(needle) && t.length < needle.length + 80;
+      });
+      cands.sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+      if (cands.length) return cands[0];
+    }
     // Otherwise the album title is the main <h1>; fall back to any non-empty heading.
     const h1 = (main || document).querySelector('h1');
     if (h1 && (h1.textContent || '').trim()) return h1;
     for (const h of all) if ((h.textContent || '').trim()) return h;
+    // Nothing matched — log what WAS available so an unanchorable layout is
+    // diagnosable (tag + a short text snippet only; no page content beyond titles).
+    console.warn(
+      `[ITAM] header UI: no title anchor for "${(name || '').slice(0, 40)}"; <main> headings: ` +
+        (scoped
+          .map((h) => h.tagName + ':' + (h.textContent || '').trim().slice(0, 24))
+          .join(' | ') || '(none)'),
+    );
     return null;
   }
 
