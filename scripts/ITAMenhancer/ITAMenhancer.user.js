@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.1
+// @version       1.7.2
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -832,7 +832,7 @@
 
   /** GET an amp-api path → parsed JSON. GM_xmlhttpRequest lets us set Origin and
    *  bypass page CORS; we add Media-User-Token when the user is logged in. */
-  function apiGet(path, devToken, userToken) {
+  function apiGet(path, devToken, userToken, timeout) {
     const headers = { Authorization: `Bearer ${devToken}`, Origin: 'https://music.apple.com' };
     if (userToken) headers['Media-User-Token'] = userToken;
     return new Promise((resolve, reject) => {
@@ -840,6 +840,10 @@
         method: 'GET',
         url: API_BASE + path,
         headers,
+        // WITHOUT a timeout a stalled request never fires any callback — the
+        // Promise hangs forever (this is what made a lyrics download "do nothing":
+        // it sat awaiting a request that never returned, with no error to surface).
+        timeout: timeout || 45000,
         onload: (res) => {
           if (res.status < 200 || res.status >= 300) {
             const e = new Error(`API HTTP ${res.status}`);
@@ -852,8 +856,16 @@
             reject(new Error('API returned non-JSON'));
           }
         },
-        onerror: () => reject(new Error('network error')),
-        ontimeout: () => reject(new Error('timeout')),
+        onerror: () => {
+          const e = new Error('network error');
+          e.status = 'network';
+          reject(e);
+        },
+        ontimeout: () => {
+          const e = new Error('timeout');
+          e.status = 'timeout';
+          reject(e);
+        },
       });
     });
   }
@@ -1062,21 +1074,32 @@
    *  unavailable (logged out, or the song lacks that lyric type → amp-api 404). */
   async function fetchLyricsTtml(country, songId, kind, devToken, userToken) {
     const qs = settings.locale ? `?l=${encodeURIComponent(settings.locale)}` : '';
+    const path = `/v1/catalog/${country}/songs/${songId}/${kind}${qs}`;
     let json;
     try {
-      json = await apiGet(
-        `/v1/catalog/${country}/songs/${songId}/${kind}${qs}`,
-        devToken,
-        userToken,
-      );
+      // Diagnostic: the request URL — logged BEFORE the request so it's visible
+      // even if the request stalls (URL only, never any lyric content).
+      console.log(`[ITAM] lyrics fetch → ${API_BASE}${path}`);
+      // 15s ceiling so a stalled lyrics request fails fast and reports (the lyrics
+      // endpoint sometimes never responds; an unbounded await is what made this
+      // silently "do nothing").
+      json = await apiGet(path, devToken, userToken, 15000);
     } catch (err) {
       // Log the status (NOT the lyrics) so a failing endpoint/auth is diagnosable.
       console.warn(`[ITAM] lyrics ${kind} ${songId}: ${err.status || err.message}`);
       return null;
     }
-    const ttml = json && json.data && json.data[0] && json.data[0].attributes?.ttml;
-    if (typeof ttml === 'string' && ttml) return ttml;
-    console.warn(`[ITAM] lyrics ${kind} ${songId}: 200 but no ttml in response`);
+    const attrs = json && json.data && json.data[0] && json.data[0].attributes;
+    const ttml = attrs && attrs.ttml;
+    if (typeof ttml === 'string' && ttml) {
+      console.log(`[ITAM] lyrics ${kind} ${songId}: ok (${ttml.length} chars of TTML)`);
+      return ttml;
+    }
+    // 200 but no ttml — log the attribute KEYS (not their values) in case the
+    // shape changed or this song simply carries no lyrics of this kind.
+    console.warn(
+      `[ITAM] lyrics ${kind} ${songId}: 200 but no ttml; attrs=${attrs ? Object.keys(attrs).join(',') || '{}' : '(no data)'}`,
+    );
     return null;
   }
 
@@ -1157,20 +1180,27 @@
       const devToken = await getDevToken();
       toast(`Fetching ${tierLabel} lyrics…`);
 
+      // Fetch every track CONCURRENTLY (preserving order). Sequentially, a single
+      // stalled track would block all the rest behind its 15s timeout — 13 tracks
+      // could take minutes; in parallel the whole batch resolves in one window.
+      const settled = await Promise.all(
+        tracks.map(async (t) => {
+          try {
+            const lyr = await trackLyrics(model.country, t.id, tier, devToken, userToken);
+            return lyr ? { t, ...lyr } : null;
+          } catch (err) {
+            // Isolate a bad track so it can't abort the whole batch.
+            console.warn('[ITAM] lyrics failed for track', t.name, err.message || err);
+            return null;
+          }
+        }),
+      );
       const out = [];
       const fellBack = new Set();
-      for (const t of tracks) {
-        let lyr = null;
-        try {
-          lyr = await trackLyrics(model.country, t.id, tier, devToken, userToken);
-        } catch (err) {
-          // Isolate a bad track so it can't abort the whole batch.
-          console.warn('[ITAM] lyrics failed for track', t.name, err);
-        }
-        if (lyr) {
-          out.push({ t, ...lyr });
-          if ((TIER_RANK[lyr.kind] || 0) < (TIER_RANK[tier] || 0)) fellBack.add(lyr.kind);
-        }
+      for (const r of settled) {
+        if (!r) continue;
+        out.push(r);
+        if ((TIER_RANK[r.kind] || 0) < (TIER_RANK[tier] || 0)) fellBack.add(r.kind);
       }
       if (!out.length) return toast('No lyrics returned for this release (see console for status)');
       const note = fellBack.size ? ` (some fell back to ${[...fellBack].sort().join(' / ')})` : '';

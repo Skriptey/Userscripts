@@ -135,6 +135,16 @@ available, line-synced or plain text otherwise. The confirmation toast tells you
 tracks fell back. Tracks with no lyrics at all are skipped, and any error is shown as a
 toast (so a download can't silently do nothing).
 
+**Q. Download Lyrics shows “Fetching…” then nothing happens — no file, no message.**
+It should always end in a toast now (“Lyrics saved ✓”, “No lyrics returned…”, or an
+error). If it still seems to stall, open the browser **console** (F12 → Console): on
+every attempt ITAM logs the request URL (`[ITAM] lyrics fetch → …`) and the per-track
+outcome (`ok`, an HTTP status, `timeout`, or `no ttml`) — never the lyrics themselves.
+Each request now has a **15-second timeout**, so a non-responding lyrics endpoint reports
+`timeout` instead of hanging forever. If you see `timeout` or a `401`/`403` for every
+track, your Apple Music **Music-User-Token** likely wasn't picked up — reload the Apple
+Music tab while logged in and retry; the console line tells us exactly which it is.
+
 **Q. What does “Find ISWCs” do?**
 Apple shows the **writers** of a song but not its **ISWC** (the International Standard
 Musical Work Code — the composition's counterpart to a recording's ISRC). **Find ISWCs**
