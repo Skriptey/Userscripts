@@ -69,7 +69,12 @@ handling_ setting:
 | `extend`        | Silently give it its own oversized ZIP.           |
 | `skip`          | Skip it (logged in the progress panel).           |
 
-Prefer no ZIPs? Turn **ZIP bundling** off to save each file individually.
+Prefer no ZIPs? Turn **ZIP bundling** off to save each file individually. In this
+mode BunkrDL **keeps downloading the rest of the queue in the background** while
+each file's save is pending, so a slow "where to save?" dialog won't stall the
+album (un-saved files held in memory are bounded by **Max ZIP size**). For the
+smoothest no-ZIP **Download All**, also turn on **Save via GM_download** so the
+manager saves each file with no per-file dialog.
 
 Building a large ZIP runs in the tab, so it's the slow part of a big album; the
 progress panel shows a **percentage** plus a moving **sheen** while it packs (so a
@@ -92,22 +97,22 @@ Use **Clear resume data** in the menu to start an album over from scratch.
 Open your userscript manager's menu (its toolbar icon, while on a supported
 page) → **BunkrDL** commands. Settings persist across sessions.
 
-| Setting                   | Default    | Notes                                                    |
-| ------------------------- | ---------- | -------------------------------------------------------- |
-| Max ZIP size              | `1024` MiB | Cap per ZIP; also bounds tab memory (~2× while zipping). |
-| Delay between files       | `1500` ms  | Base pause before each file.                             |
-| Delay jitter              | `750` ms   | Random `0..jitter` added per pause.                      |
-| Max retries per file      | `4`        | Attempts before a file is failed.                        |
-| Parallel downloads        | `1`        | Files at once (1–8). Higher = faster, more ban risk.     |
-| Oversize file handling    | `ask`      | `ask` / `extend` / `skip`.                               |
-| ZIP bundling              | `on`       | Off = save files individually.                           |
-| Compression               | `STORE`    | `STORE` (best for media) or `DEFLATE`.                   |
-| Pre-flight confirmation   | `on`       | Confirm count/size/# ZIPs before starting.               |
-| Verify file sizes         | `on`       | Retry downloads shorter than the manifest size.          |
-| Resume support            | `on`       | Remember completed files to resume an album.             |
-| Save ZIPs via GM_download | `off`      | Manager saves (no per-file dialog); good for many ZIPs.  |
-| Clear resume data         | —          | Forget saved progress for all albums.                    |
-| Reset to defaults         | —          | Restore all settings.                                    |
+| Setting                 | Default    | Notes                                                                                      |
+| ----------------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| Max ZIP size            | `1024` MiB | Cap per ZIP; also bounds tab memory (~2× while zipping).                                   |
+| Delay between files     | `1500` ms  | Base pause before each file.                                                               |
+| Delay jitter            | `750` ms   | Random `0..jitter` added per pause.                                                        |
+| Max retries per file    | `4`        | Attempts before a file is failed.                                                          |
+| Parallel downloads      | `1`        | Files at once (1–8). Higher = faster, more ban risk.                                       |
+| Oversize file handling  | `ask`      | `ask` / `extend` / `skip`.                                                                 |
+| ZIP bundling            | `on`       | Off = save files individually.                                                             |
+| Compression             | `STORE`    | `STORE` (best for media) or `DEFLATE`.                                                     |
+| Pre-flight confirmation | `on`       | Confirm count/size/# ZIPs before starting.                                                 |
+| Verify file sizes       | `on`       | Retry downloads shorter than the manifest size.                                            |
+| Resume support          | `on`       | Remember completed files to resume an album.                                               |
+| Save via GM_download    | `off`      | Manager saves (ZIPs & individual files), no per-file dialog; best for no-ZIP Download All. |
+| Clear resume data       | —          | Forget saved progress for all albums.                                                      |
+| Reset to defaults       | —          | Restore all settings.                                                                      |
 
 The numeric/list items open a prompt; the rest are **one-click toggles** (a single
 click flips and saves them, with a toast). The menu's "(current: …)" label refreshes

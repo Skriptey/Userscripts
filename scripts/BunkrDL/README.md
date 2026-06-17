@@ -75,7 +75,13 @@ _Oversize file handling_ setting:
 - **skip** — skips it and logs the skip.
 
 You can also switch off ZIP bundling entirely (see settings) to save each file
-individually — useful for very large albums or low-memory machines.
+individually — useful for very large albums or low-memory machines. In this mode
+**fetching and saving are decoupled**: BunkrDL keeps downloading the rest of the
+queue in the background while each file's save is pending, so a slow "where to
+save?" dialog no longer stalls the album. (How many un-saved files are held in
+memory while they wait is bounded by **Max ZIP size**.) For the smoothest no-ZIP
+**Download All**, turn on **Save via GM_download** so the manager saves each file
+straight to your download folder with no per-file dialog.
 
 **Filenames are decoded for readability.** Bunkr encodes spaces as `+` (and
 sometimes `%20`/`%xx`); BunkrDL turns these back into real characters, so
@@ -93,22 +99,22 @@ Open your userscript manager's menu (click the manager's toolbar icon while on a
 supported page) and use the **BunkrDL** commands. Settings persist via the
 manager's storage.
 
-| Setting                   | Default    | Notes                                                                           |
-| ------------------------- | ---------- | ------------------------------------------------------------------------------- |
-| Max ZIP size              | `1024` MiB | Target cap per ZIP. Also bounds memory — see below.                             |
-| Delay between files       | `1500` ms  | Base pause before each file (rate limiting).                                    |
-| Delay jitter              | `750` ms   | Random `0..jitter` added to each pause.                                         |
-| Max retries per file      | `4`        | Attempts before a file is counted as failed.                                    |
-| Parallel downloads        | `1`        | Files fetched at once (1–8). Higher = faster, but more rate-limit/ban risk.     |
-| Oversize file handling    | `ask`      | `ask` \| `extend` \| `skip` (see above).                                        |
-| ZIP bundling              | `on`       | Off = save each file individually instead of zipping.                           |
-| Compression               | `STORE`    | `STORE` (fast, no recompress — best for already-compressed media) or `DEFLATE`. |
-| Pre-flight confirmation   | `on`       | Show a summary (count, size, # ZIPs) and confirm before a job starts.           |
-| Verify file sizes         | `on`       | Re-download files whose bytes fall short of the manifest size.                  |
-| Resume support            | `on`       | Remember completed files so an interrupted album resumes.                       |
-| Save ZIPs via GM_download | `off`      | Let the manager save (no per-file dialog) — handy for many-ZIP albums.          |
-| Clear resume data         | —          | Forget saved progress for all albums.                                           |
-| Reset to defaults         | —          | Restores every setting above.                                                   |
+| Setting                 | Default    | Notes                                                                                                  |
+| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| Max ZIP size            | `1024` MiB | Target cap per ZIP. Also bounds memory — see below.                                                    |
+| Delay between files     | `1500` ms  | Base pause before each file (rate limiting).                                                           |
+| Delay jitter            | `750` ms   | Random `0..jitter` added to each pause.                                                                |
+| Max retries per file    | `4`        | Attempts before a file is counted as failed.                                                           |
+| Parallel downloads      | `1`        | Files fetched at once (1–8). Higher = faster, but more rate-limit/ban risk.                            |
+| Oversize file handling  | `ask`      | `ask` \| `extend` \| `skip` (see above).                                                               |
+| ZIP bundling            | `on`       | Off = save each file individually instead of zipping.                                                  |
+| Compression             | `STORE`    | `STORE` (fast, no recompress — best for already-compressed media) or `DEFLATE`.                        |
+| Pre-flight confirmation | `on`       | Show a summary (count, size, # ZIPs) and confirm before a job starts.                                  |
+| Verify file sizes       | `on`       | Re-download files whose bytes fall short of the manifest size.                                         |
+| Resume support          | `on`       | Remember completed files so an interrupted album resumes.                                              |
+| Save via GM_download    | `off`      | Manager saves (ZIPs & individual files) with no per-file dialog — recommended for no-ZIP Download All. |
+| Clear resume data       | —          | Forget saved progress for all albums.                                                                  |
+| Reset to defaults       | —          | Restores every setting above.                                                                          |
 
 > **Memory note:** ZIP building happens **in the browser tab**, so peak memory is
 > roughly `2 × Max ZIP size` while a ZIP is generated, plus one in-flight file per

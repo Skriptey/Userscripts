@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.5.4
+// @version      1.6.0
 // @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums and balbums.st listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -139,6 +139,15 @@
 //  ZIP that fails to build (e.g. the tab hitting a memory limit) as "❌ <name>: …"
 //  rather than letting it stall silently.
 //
+//  NO-ZIP "Download All" — with ZIP bundling off, each file saves individually.
+//  Saving and fetching are DECOUPLED: the fetch workers hand finished blobs to a
+//  save queue and immediately fetch the next file, while a single background
+//  drainer (drainSaves) saves one file at a time. So a slow "where to save?"
+//  dialog — or GM_download waiting on the manager — no longer stalls the queue;
+//  the rest keep downloading in the background. Un-saved blobs held in memory are
+//  bounded by the max-ZIP-size knob (a worker pauses fetching when that cap is
+//  reached), and a file's resume "done" mark is committed only once it's saved.
+//
 //  @connect set — the two FIXED hosts, resolver dl.bunkr.cr and signer
 //  glb-apisign.cdn.cr, are listed EXPLICITLY (belt-and-braces for any manager
 //  that doesn't match @connect subdomains); they're also covered as subdomains of
@@ -204,7 +213,7 @@
     confirm: true, // show a pre-flight summary + confirmation before a job starts
     verifySize: true, // re-download files whose byte size is short of the manifest size
     resume: true, // remember completed files so an interrupted album can resume
-    useGmDownload: false, // save via GM_download (manager handles saving) instead of an <a> click
+    useGmDownload: false, // save via GM_download (manager handles saving, no per-file dialog) instead of an <a> click — recommended for no-ZIP "Download All"
   };
 
   // The resolver API path (appended to each file's own dl.bunkr.<tld> host — the
@@ -918,10 +927,32 @@
       ui.setTitle(
         `${album.title || 'Album'} — ${files.length} file(s), ~${formatBytes(totalBytes)}`,
       );
+      // --- Individual-save queue (no-ZIP "Download All") --------------------
+      // In no-ZIP mode the fetch workers don't save inline; they push each
+      // finished blob here and immediately fetch the next file. A single
+      // background drainer (drainSaves) saves one file at a time, so a slow save
+      // dialog — or GM_download waiting on the manager — never stalls the queue.
+      // `saveQBytes` bounds how many un-saved blobs we hold in memory (reusing
+      // the max-ZIP-size knob); a fetch worker parks on `saveBackpressure` when
+      // that cap is hit, and the drainer parks on `saveIdle` when the queue is
+      // momentarily empty. `wakeAll` resolves everything parked on a list.
+      const saveQueue = []; // {blob, name, slug, size} awaiting save
+      let saveQBytes = 0; // bytes of un-saved blobs currently in memory
+      let enqueueDone = false; // set once every file has been fetched/enqueued
+      const saveIdle = []; // drainer parked here while the queue is empty
+      const saveBackpressure = []; // fetch workers parked here while over the cap
+      const wakeAll = (list) => {
+        const waiters = list.splice(0);
+        for (const w of waiters) w();
+      };
+
       ui.onCancel(() => {
         cancelRequested = true;
         ui.log('Cancelling after in-flight downloads…');
         if (activeRequest && activeRequest.abort) activeRequest.abort();
+        // Release anything parked so the job can wind down cleanly.
+        wakeAll(saveIdle);
+        wakeAll(saveBackpressure);
       });
 
       // --- ZIP packer state (mutated only inside the serialized packChain) ----
@@ -991,16 +1022,31 @@
         return candidate;
       }
 
-      /** Pack (or, in individual mode, save) one downloaded file. Serialized. */
+      /** Pack (or, in individual mode, enqueue for saving) one downloaded file.
+       *  Serialized via packChain so ZIP state stays consistent. In no-ZIP mode
+       *  it only enqueues — drainSaves() does the actual saving — so a slow save
+       *  never blocks this worker from fetching the next file. */
       async function packOne(file, blob) {
         const size = blob.size;
         bytesDone += size;
 
         if (!settings.zip) {
-          await saveBlob(blob, uniqueName(sanitizeFilename(file.name)));
-          commit([file.slug]);
-          done++;
-          ui.setOverall(done, files.length, bytesDone, totalBytes);
+          // Hand off to the background drainer, then return so this worker
+          // fetches the next file straight away. `done` and the resume commit
+          // happen in drainSaves(), once the file is actually saved.
+          saveQueue.push({
+            blob,
+            name: uniqueName(sanitizeFilename(file.name)),
+            slug: file.slug,
+            size,
+          });
+          saveQBytes += size;
+          wakeAll(saveIdle); // nudge the drainer in case it was waiting for work
+          // Backpressure: if too many un-saved blobs are buffered, wait for the
+          // drainer to catch up before fetching more (bounds memory use).
+          while (saveQBytes > maxZipBytes && !cancelRequested) {
+            await new Promise((resolve) => saveBackpressure.push(resolve));
+          }
           return;
         }
 
@@ -1037,6 +1083,32 @@
         pendingSlugs.push(file.slug);
         done++;
         ui.setOverall(done, files.length, bytesDone, totalBytes);
+      }
+
+      /** Background save loop for no-ZIP mode: save queued blobs one at a time,
+       *  independent of the fetch workers, so a slow save can't stall the queue.
+       *  Returns once every file has been enqueued (enqueueDone) and drained. */
+      async function drainSaves() {
+        for (;;) {
+          if (cancelRequested) return;
+          if (!saveQueue.length) {
+            if (enqueueDone) return; // nothing left and no more coming
+            await new Promise((resolve) => saveIdle.push(resolve)); // await work
+            continue;
+          }
+          const item = saveQueue.shift();
+          try {
+            await saveBlob(item.blob, item.name);
+            commit([item.slug]); // persist resume only after the file is saved
+          } catch (err) {
+            failures++;
+            ui.log(`✗ Save error "${item.name}": ${err.message}`);
+          }
+          saveQBytes -= item.size;
+          done++;
+          ui.setOverall(done, files.length, bytesDone, totalBytes);
+          wakeAll(saveBackpressure); // a slot freed up — let fetchers resume
+        }
       }
 
       /** Download one file with retries, backoff and size verification. Each
@@ -1130,9 +1202,19 @@
         }
       }
 
+      // In no-ZIP mode, run the background save drainer alongside the fetch
+      // workers; in ZIP mode saving happens inside the (serialized) packChain.
+      const drainer = settings.zip ? null : drainSaves();
+
       const workers = Math.max(1, Math.min(8, Number(settings.concurrency) || 1));
       await Promise.all(Array.from({ length: workers }, () => worker()));
       await packChain.catch(() => {});
+
+      // Every file is fetched and enqueued — let the drainer save the remainder
+      // (it has kept saving in the background throughout) before we summarise.
+      enqueueDone = true;
+      wakeAll(saveIdle);
+      if (drainer) await drainer.catch(() => {});
 
       // Flush whatever remains in the final ZIP.
       if (!cancelRequested) {
@@ -1915,9 +1997,9 @@
     toggle('Verify file sizes', 'verifySize');
     toggle('Resume support', 'resume');
     toggle(
-      'Save ZIPs via GM_download',
+      'Save via GM_download (ZIPs & individual files)',
       'useGmDownload',
-      'on (manager handles saving)',
+      'on (manager saves — no per-file dialog; best for no-ZIP Download All)',
       'off (browser <a> download)',
     );
     add('Clear resume data (all albums)', () => {
