@@ -10,6 +10,8 @@
 - [Tidal Enhancer](Tidal-Enhancer)
 - [Deezer Enhancer](Deezer-Enhancer)
 - [Discogs Enhancer](Discogs-Enhancer)
+- [Spotify Enhancer](Spotify-Enhancer)
+- [Qobuz Enhancer](Qobuz-Enhancer)
 
 **Help**
 
