@@ -22,9 +22,9 @@ covered automatically (Apple redirects them to Apple Music).
 ## Features
 
 - **Inline album-header buttons** — **Barcode & ISRCs** (opens the panel),
-  **Download cover art**, **Download Lyrics** (logged-in), and **Harmony ↗**, placed
-  after the format badges. Each is independently toggleable; the floating **ITAM ▾**
-  launcher remains as a fallback.
+  **Download cover art**, **Download Lyrics** (logged-in), **Find ISWCs**, and
+  **Harmony ↗**, placed after the format badges. Each is independently toggleable;
+  the floating **ITAM ▾** launcher remains as a fallback.
 - **Format badges** — Lossless / Hi-Res Lossless / Dolby Atmos / Spatial Audio,
   inline near the title and in the panel.
 - **Barcode (UPC)** and **per-track ISRCs**, in a clean table.
@@ -34,6 +34,10 @@ covered automatically (Apple redirects them to Apple Music).
 - **Classical Work column** — classical releases (e.g. on **Apple Music
   Classical**) name each track's parent **work**; the panel's track table adds a
   **Work** column, shown only when at least one track names a work (toggleable).
+  The table also lists each **track length**, shows an **Apple Digital Master
+  (“Mastered for iTunes”) badge**, and **hides the Composer column** on a narrow
+  panel; the panel **widens with the window** and shows the script version in its
+  footer.
 - **One-click copy** — barcode, a single ISRC (click it), all ISRCs, or the whole
   record as JSON.
 - **MagicISRC** submit link — resolves the album's **MusicBrainz release** by its
@@ -45,12 +49,14 @@ covered automatically (Apple redirects them to Apple Music).
   Square / Vertical / All** (`.mp4` — `…_SquareCover.mp4` / `…_VerticalCover.mp4`).
   **All** → a `<artist> - <album>_CoverArt.zip` at the L resolution. Resolution is
   set via **Animated cover-art resolution** (L 1080 / XL 2160 / Max highest).
-- **Download Lyrics** _(logged-in only)_ — a dropdown of the tiers available:
-  **Word-by-Word** (Apple Music “Sing” → enhanced/“A2” `.lrc`), **Line-by-Line**
-  (`.lrc`), and **Static** (`.txt`). An album bundles every track into a ZIP named
-  `<disc> - <track> - <title>.<ext>`; a single song saves one file. The button is
-  **hidden when nothing is downloadable**. Lyrics are licensed content — **personal
-  use** only.
+- **Download Lyrics** _(logged-in only)_ — pick a preferred tier: **Word-by-Word**
+  (Apple Music “Sing” → enhanced/“A2” `.lrc`), **Line-by-Line** (`.lrc`), or
+  **Static** (`.txt`). Each track **falls back automatically** to the next-best
+  format it has (Word-by-Word → Line-by-Line → Static; Line-by-Line → Static), so a
+  release where only some tracks are word-synced still downloads complete. An album
+  bundles every track into a ZIP named `<disc> - <track> - <title>.<ext>`; a single
+  song saves one file. The button is **hidden when nothing is downloadable**. Lyrics
+  are licensed content — **personal use** only.
 - **Find ISWCs** — Apple gives writers but no ISWC, so on click this looks each track's
   **ISWC** up from **MusicBrainz** (+ a **credits.fm** gap-fill) and shows ranked
   candidates with a **confidence** and **source**, one-click copy, and a **“Seed MB ↗”**

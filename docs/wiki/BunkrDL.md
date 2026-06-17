@@ -42,12 +42,19 @@ just that one file (saved directly, no ZIP).
 All Bunkr domains/TLDs are supported (`bunkr.cr`, `bunkr.ru`, `bunkr.site`,
 `bunkr.media`, `bunkr.fi`, … including legacy ones).
 
-### balbums.st listing pages
+### balbums.st / bunkr-albums.io listing pages
 
 On search results, `/live`, `/topalbums`, `/topvideos`, `/topfiles`, and
-`/topimages`, a small **⬇ Download ▾** button is added under each album card
-(including cards loaded later by scrolling). Picking a type fetches that album
-from Bunkr and downloads it.
+`/topimages`, a small **⬇ Download ▾** button is added under each album card.
+Picking a type fetches that album from Bunkr and downloads it.
+
+Three listing enhancements are also added (each menu-toggleable, each a no-op if
+the layout isn't recognised):
+
+- **Sort dropdown** — reorder the grid by Default / Name (A–Z) / File count.
+- **Infinite scroll** — auto-load the next page of albums near the bottom.
+- **Hover previews** — hover a card to show its item thumbnails; click one to
+  open that file.
 
 ### Single Bunkr file pages
 
@@ -92,27 +99,35 @@ done, continues the ZIP numbering, and only downloads what's missing. Each
 download is also size-checked against the manifest and retried if it's truncated.
 Use **Clear resume data** in the menu to start an album over from scratch.
 
+The progress panel has a **Cancel** button. Cancelling stops fetching new files
+but still **saves anything already downloaded** (and records it for resume), so
+completed files aren't wasted — only in-progress / not-yet-started files stop.
+
 ## Settings
 
 Open your userscript manager's menu (its toolbar icon, while on a supported
 page) → **BunkrDL** commands. Settings persist across sessions.
 
-| Setting                 | Default    | Notes                                                                                      |
-| ----------------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| Max ZIP size            | `1024` MiB | Cap per ZIP; also bounds tab memory (~2× while zipping).                                   |
-| Delay between files     | `1500` ms  | Base pause before each file.                                                               |
-| Delay jitter            | `750` ms   | Random `0..jitter` added per pause.                                                        |
-| Max retries per file    | `4`        | Attempts before a file is failed.                                                          |
-| Parallel downloads      | `1`        | Files at once (1–8). Higher = faster, more ban risk.                                       |
-| Oversize file handling  | `ask`      | `ask` / `extend` / `skip`.                                                                 |
-| ZIP bundling            | `on`       | Off = save files individually. Applies to the next download.                               |
-| Compression             | `STORE`    | `STORE` (best for media) or `DEFLATE`.                                                     |
-| Pre-flight confirmation | `on`       | Confirm count/size/# ZIPs before starting.                                                 |
-| Verify file sizes       | `on`       | Retry downloads shorter than the manifest size.                                            |
-| Resume support          | `on`       | Remember completed files to resume an album.                                               |
-| Save via GM_download    | `off`      | Manager saves (ZIPs & individual files), no per-file dialog; best for no-ZIP Download All. |
-| Clear resume data       | —          | Forget saved progress for all albums.                                                      |
-| Reset to defaults       | —          | Restore all settings.                                                                      |
+| Setting                     | Default    | Notes                                                                                      |
+| --------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| Max ZIP size                | `1024` MiB | Cap per ZIP; also bounds tab memory (~2× while zipping).                                   |
+| Delay between files         | `1500` ms  | Base pause before each file.                                                               |
+| Delay jitter                | `750` ms   | Random `0..jitter` added per pause.                                                        |
+| Max retries per file        | `4`        | Attempts before a file is failed.                                                          |
+| Parallel downloads          | `1`        | Files at once (1–8). Higher = faster, more ban risk.                                       |
+| Oversize file handling      | `ask`      | `ask` / `extend` / `skip`.                                                                 |
+| ZIP bundling                | `on`       | Off = save files individually. Applies to the next download.                               |
+| Compression                 | `STORE`    | `STORE` (best for media) or `DEFLATE`.                                                     |
+| Pre-flight confirmation     | `on`       | Confirm count/size/# ZIPs before starting.                                                 |
+| Verify file sizes           | `on`       | Retry downloads shorter than the manifest size.                                            |
+| Resume support              | `on`       | Remember completed files to resume an album.                                               |
+| Save via GM_download        | `off`      | Manager saves (ZIPs & individual files), no per-file dialog; best for no-ZIP Download All. |
+| Listing: sort dropdown      | `on`       | Sort control (Default / Name / File count) on listing pages.                               |
+| Listing: infinite scroll    | `on`       | Auto-load the next page of albums near the bottom.                                         |
+| Listing: hover previews     | `on`       | Hover an album card to preview its item thumbnails.                                        |
+| Listing: max preview thumbs | `12`       | Cap on thumbnails per hover preview.                                                       |
+| Clear resume data           | —          | Forget saved progress for all albums.                                                      |
+| Reset to defaults           | —          | Restore all settings.                                                                      |
 
 The numeric/list items open a prompt; the rest are **one-click toggles** (a single
 click flips and saves them, with a toast). The menu's "(current: …)" label refreshes

@@ -5,6 +5,7 @@
 **Scripts**
 
 - [BunkrDL](BunkrDL)
+- [MetaIncDL](MetaIncDL)
 - [ITAM Enhancer](ITAMenhancer)
 - [MB ISWC Seeder](MB-ISWC-Seeder)
 - [Tidal Enhancer](Tidal-Enhancer)

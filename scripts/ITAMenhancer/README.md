@@ -40,9 +40,11 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   a work, and individual cells are blank for tracks without one — so non-classical
   albums never grow the column. Toggle with **Classical Work column**.
 - **Details panel** — a floating **“ITAM ▾”** button (bottom-right) opens a panel
-  with: formats, **barcode (UPC)**, record label, copyright, release date,
-  Mastered-for-iTunes, and a **track table with ISRCs** (plus the cover-art and
-  Harmony actions).
+  with: formats, **barcode (UPC)**, record label, copyright, release date, an
+  **Apple Digital Master (“Mastered for iTunes”) badge**, and a **track table with
+  ISRCs and track lengths** (plus the cover-art and Harmony actions). The panel
+  **grows with the window** on wide screens and **hides the Composer column** when
+  it gets too narrow; its footer shows the running ITAM Enhancer version.
 - **One-click copy** — copy the barcode, any single ISRC (click it), **all
   ISRCs**, or the whole record **as JSON**.
 - **MagicISRC** — one click opens the album in kepstin's MagicISRC, pre-filled
@@ -66,13 +68,17 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   (huge) animated files save separately instead of zipping. Resolution is set via
   the **Animated cover-art resolution** menu item (**L** 1080 · **XL** 2160 ·
   **Max** highest).
-- **Download Lyrics** _(requires being logged in to Apple Music)_ — a dropdown of
-  the lyric tiers actually available for the release: **Word-by-Word Lyrics**
-  (Apple Music “Sing”, saved as enhanced/“A2” `.lrc`), **Line-by-Line Lyrics**
-  (standard `.lrc`), and **Static Lyrics** (plain `.txt`). An album bundles every
-  track into a ZIP with files named `<disc> - <track> - <title>.<ext>`; a single
-  song saves one file. The button is **hidden when nothing is downloadable** (you’re
-  not logged in, or the release has no lyrics). Lyrics come from Apple’s
+- **Download Lyrics** _(requires being logged in to Apple Music)_ — pick a
+  preferred tier from the dropdown: **Word-by-Word** (Apple Music “Sing”, enhanced
+  “A2” `.lrc`), **Line-by-Line** (standard `.lrc`), or **Static** (plain `.txt`).
+  **Each track automatically falls back** to the next-best format it actually has —
+  **Word-by-Word → Line-by-Line → Static** (and **Line-by-Line → Static**) — so a
+  release where only some tracks have “Sing” lyrics still downloads complete; the
+  toast notes if any tracks fell back. An album bundles every track into a ZIP with
+  files named `<disc> - <track> - <title>.<ext>`; a single song saves one file.
+  Tracks with no lyrics are skipped, a single bad track can’t abort the rest, and
+  any failure is surfaced as a toast (never a silent no-op). The button is
+  **hidden when nothing is downloadable**. Lyrics come from Apple’s
   `syllable-lyrics`/`lyrics` TTML and need your **logged-in subscription**; they are
   licensed content, so this is for **personal use** only. Toggle with **Download
   Lyrics button**.

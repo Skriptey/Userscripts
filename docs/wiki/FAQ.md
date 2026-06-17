@@ -127,6 +127,14 @@ It only appears when you're **logged in to Apple Music** _and_ the release has l
 word lyrics also only exist for songs Apple has “Sing” data for — other songs still
 offer Line-by-Line and Static.
 
+**Q. I picked Word-by-Word but some tracks aren't word-synced — what happens?**
+Each track **automatically falls back** to the next-best format it actually has:
+**Word-by-Word → Line-by-Line → Static** (and **Line-by-Line → Static**). So an album
+where only some tracks have “Sing” lyrics still downloads complete — word-synced where
+available, line-synced or plain text otherwise. The confirmation toast tells you if any
+tracks fell back. Tracks with no lyrics at all are skipped, and any error is shown as a
+toast (so a download can't silently do nothing).
+
 **Q. What does “Find ISWCs” do?**
 Apple shows the **writers** of a song but not its **ISWC** (the International Standard
 Musical Work Code — the composition's counterpart to a recording's ISRC). **Find ISWCs**
@@ -236,10 +244,59 @@ that grabs just that file; (2) on the file's own page (`/f/…`, `/v/…`, etc.)
 the floating **⬇ BunkrDL — Download** button. Either saves that one file
 directly (no ZIP).
 
+**Q. What are the sort / infinite-scroll / hover-preview features on the album
+index?**
+On the listing sites (**balbums.st** / **bunkr-albums.io**) BunkrDL adds, on top
+of the per-card download button: a **sort dropdown** (Default / Name A–Z / File
+count), **infinite scroll** (auto-loads the next page near the bottom), and
+**hover previews** (hover an album card to see thumbnails of its contents — click
+one to open that file). Each is an independent menu toggle, and each quietly does
+nothing if the page layout isn't recognised, so they can never break downloading.
+
+**Q. I cancelled a no-ZIP download — did I lose the files already downloaded?**
+No (as of v1.7.0). When you cancel, BunkrDL stops fetching new files but still
+**saves everything it had already downloaded** and queued, so completed files
+aren't wasted. Only the in-progress and not-yet-started files are skipped.
+
 **Q. Spaces in my filenames show up as `+` or `%20`. Can that be fixed?**
 BunkrDL already decodes them — `My+File%20(1).mp4` is saved as
 `My File (1).mp4`, both for ZIP entries and individual downloads.
 
 **Q. I get dozens of "Save" prompts on a huge album.**
-Turn on **Save ZIPs via GM_download** in settings — the userscript manager then
-saves files to your download folder without a dialog per ZIP.
+Turn on **Save via GM_download** in settings — the userscript manager then saves
+files to your download folder without a per-file dialog.
+
+## MetaIncDL
+
+**Q. Is this safe for my account?**
+MetaIncDL runs on your **real, logged-in** Instagram/Facebook/Threads account and
+only reads what your session can already see. Aggressive bulk grabbing can trip
+Meta's anti-automation and put a **checkpoint/challenge** on your account, so the
+defaults are deliberately conservative (slow pacing, a per-window request cap, a
+200-item feed cap) and MetaIncDL **hard-stops** the instant it sees a checkpoint.
+Only download your own / authorised content, and don't raise the limits casually.
+
+**Q. It says "interact with the page to arm MetaIncDL."**
+MetaIncDL reuses the page's own session and queries — it needs the relevant request
+to have fired first. **Scroll the profile (or open the tab/post) once**, then
+retry. On a cold route the query simply hasn't happened yet.
+
+**Q. The download stopped and mentions a checkpoint/challenge.**
+Stop. Open the site normally, clear the challenge, wait a while, and raise the
+**Delay between pages** / lower the **Feed item cap** before trying again.
+
+**Q. Why are some images saved as PNG (or still webp)?**
+MetaIncDL always tries the **native JPEG** variant first. If only webp is available
+it converts per your **webp fallback** setting — **PNG** (default, lossless),
+**JPG**, or **keep** (the original `.webp`). Both PNG and JPG **carry any EXIF
+across** (PNG via an `eXIf` chunk, JPG via APP1). Meta usually strips original
+camera EXIF on upload, so there's often only a colour profile to keep.
+
+**Q. Does it get Stories / Highlights of other people?**
+Only ones your session can already view, and only after you confirm the one-time
+**"I'm authorised"** gate (which you can disable in settings). Use responsibly.
+
+**Q. It's labelled beta — what does that mean?**
+Meta's internal endpoints and GraphQL `doc_id`s rotate and can't be tested
+without a live logged-in browser. Some surfaces (especially Facebook) may need
+tuning. Please report what works and what doesn't.

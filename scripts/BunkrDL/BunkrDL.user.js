@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.6.1
-// @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums and balbums.st listing pages.
+// @version      1.7.0
+// @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums, plus sorting, infinite scroll and hover previews on balbums.st / bunkr-albums.io listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
 // @match        https://balbums.st/*
 // @match        https://www.balbums.st/*
+// @match        https://bunkr-albums.io/*
+// @match        https://www.bunkr-albums.io/*
 // @match        https://bunkr.cr/*
 // @match        https://bunkr.ru/*
 // @match        https://bunkr.si/*
@@ -37,6 +39,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_listValues
 // @connect      balbums.st
+// @connect      bunkr-albums.io
 // @connect      bunkr.cr
 // @connect      bunkr.ru
 // @connect      bunkr.su
@@ -82,9 +85,15 @@
 //    (or, if that control can't be found, a floating button bottom-right).
 //    The dropdown offers: Images / Videos / Audio / Archives / All. Each file
 //    card in the grid also gets a "⬇ Download" button for just that one file.
-//  • On balbums.st listing pages (search, /live, /topalbums, /topvideos,
-//    /topfiles, /topimages) it adds a small "⬇ Download ▾" dropdown under each
-//    album card. Picking a type fetches that album from Bunkr and downloads it.
+//  • On balbums.st / bunkr-albums.io listing pages (search, /live, /topalbums,
+//    /topvideos, /topfiles, /topimages) it adds a small "⬇ Download ▾" dropdown
+//    under each album card (picking a type fetches that album from Bunkr and
+//    downloads it), PLUS three independently-toggleable listing enhancements:
+//    a SORT dropdown (Default / Name A–Z / File count), INFINITE SCROLL (auto-
+//    loads the next page near the bottom via GM_xhr), and HOVER PREVIEWS (hover
+//    a card to fetch its album manifest and show item thumbnails — clicking one
+//    opens that file). All three degrade gracefully if the grid/cards aren't
+//    found, so a listing-site layout change can't break the core downloader.
 //  • On a single Bunkr file page (/f/ /v/ /i/ /d/) it adds a download button that
 //    fetches just that one file directly (no ZIP).
 //
@@ -214,6 +223,11 @@
     verifySize: true, // re-download files whose byte size is short of the manifest size
     resume: true, // remember completed files so an interrupted album can resume
     useGmDownload: false, // save via GM_download (manager handles saving, no per-file dialog) instead of an <a> click — recommended for no-ZIP "Download All"
+    // ----- listing-page enhancements (balbums.st / bunkr-albums.io) -----------
+    sortControls: true, // add a sort dropdown (Default / Name A–Z / File count) above the grid
+    autoloadScroll: true, // infinite scroll: auto-load the next page of albums near the bottom
+    hoverPreviews: true, // hover an album card to preview its contents (thumbnails)
+    previewMax: 12, // maximum thumbnails shown in a hover preview
   };
 
   // The resolver API path (appended to each file's own dl.bunkr.<tld> host — the
@@ -443,6 +457,7 @@
         name,
         size: Number(o.size) || 0,
         timestamp: Number(o.timestamp) || 0,
+        thumbnail: o.thumbnail ? String(o.thumbnail) : '', // for hover previews
       };
     };
 
@@ -462,6 +477,7 @@
               slug: o.slug,
               size: o.size,
               timestamp: o.timestamp,
+              thumbnail: o.thumbnail,
             }),
           )
           .filter(Boolean);
@@ -480,6 +496,7 @@
         slug: decodeJsString(readRaw(block, 'slug')),
         size: readField(block, 'size'),
         timestamp: readField(block, 'timestamp'),
+        thumbnail: decodeJsString(readRaw(block, 'thumbnail')),
       });
       if (item) items.push(item);
     }
@@ -956,9 +973,10 @@
 
       ui.onCancel(() => {
         cancelRequested = true;
-        ui.log('Cancelling after in-flight downloads…');
+        ui.log('Cancelling — saving already-downloaded files, then stopping…');
         if (activeRequest && activeRequest.abort) activeRequest.abort();
-        // Release anything parked so the job can wind down cleanly.
+        // Release anything parked so the job can wind down cleanly (the drainer
+        // still saves whatever is already queued — see drainSaves / issue #70).
         wakeAll(saveIdle);
         wakeAll(saveBackpressure);
       });
@@ -1103,12 +1121,16 @@
        *  Returns once every file has been enqueued (enqueueDone) and drained. */
       async function drainSaves() {
         for (;;) {
-          if (cancelRequested) return;
           if (!saveQueue.length) {
-            if (enqueueDone) return; // nothing left and no more coming
+            // Stop only when nothing is queued AND nothing more is coming. On a
+            // cancel the fetch workers stop enqueueing, so an empty queue ends
+            // the drain — but a NON-empty queue is still saved first (below).
+            if (enqueueDone || cancelRequested) return;
             await new Promise((resolve) => saveIdle.push(resolve)); // await work
             continue;
           }
+          // Save the queued blob even after a cancel: it's already downloaded, so
+          // dropping it would waste the fetch and lose the file (issue #70).
           const item = saveQueue.shift();
           try {
             await saveBlob(item.blob, item.name);
@@ -1651,6 +1673,329 @@
     }
   }
 
+  // -------------------------------------------------------------------------
+  //  Section 8b — listing-page enhancements (sort · infinite scroll · hover
+  //  previews) for balbums.st / bunkr-albums.io. Each is independently
+  //  menu-toggleable and degrades gracefully: if the grid/cards aren't found
+  //  nothing is added, so a layout change on the listing site can never break
+  //  the core downloader. Rewritten (behaviour, not code) from WendysBro's MIT
+  //  "Bunkr Albums Enhanced with Sorting": selectors match balbums.st's real
+  //  markup, cross-origin fetches go through GM_xhr, preview thumbnails reuse
+  //  BunkrDL's album manifest, and all UI is built with createElement (h()).
+  // -------------------------------------------------------------------------
+
+  const LISTING_HOST_RE = /(^|\.)(balbums\.st|bunkr-albums\.io)$/i;
+
+  /** True on a Bunkr-album LISTING page (search / topalbums). */
+  function isListingPage() {
+    return LISTING_HOST_RE.test(location.hostname);
+  }
+
+  /** Every album card: an <a> whose href is a Bunkr `/a/<id>` album. */
+  function listingCards() {
+    return [...document.querySelectorAll('a[href*="/a/"]')].filter((a) => {
+      try {
+        const u = new URL(a.href, location.href);
+        return BUNKR_HOST_RE.test(u.hostname) && BUNKR_ALBUM_RE.test(u.pathname);
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  /** Ancestor chain of an element, self first. */
+  function ancestorsOf(el) {
+    const out = [];
+    for (let n = el; n; n = n.parentElement) out.push(n);
+    return out;
+  }
+
+  /** Lowest common ancestor of a set of nodes = their grid container. Works
+   *  whether the cards are DIRECT grid children or each wrapped in its own tile
+   *  (the previous "parent with most cards" heuristic broke on wrapped cards). */
+  function lcaOf(nodes) {
+    if (!nodes.length) return null;
+    if (nodes.length === 1) return nodes[0].parentElement;
+    const first = new Set(ancestorsOf(nodes[0]));
+    for (const n of ancestorsOf(nodes[nodes.length - 1])) if (first.has(n)) return n;
+    return nodes[0].parentElement;
+  }
+
+  /** The grid container holding the album cards. */
+  function listingGrid() {
+    return lcaOf(listingCards());
+  }
+
+  /** The "tile": the grid's DIRECT child that contains this card — the card
+   *  itself when cards are direct grid children, else its wrapper. Sorting and
+   *  infinite-scroll appends operate on tiles so wrapped layouts work too. */
+  function cardTile(card, grid) {
+    let n = card;
+    while (n && n.parentElement && n.parentElement !== grid) n = n.parentElement;
+    return n || card;
+  }
+
+  /** A tile's text with BunkrDL-injected nodes removed, so a hover preview's or
+   *  button's text can't pollute the name/count sort keys. */
+  function tileText(tile) {
+    const clone = tile.cloneNode(true);
+    for (const n of clone.querySelectorAll('.bdl-preview, .bdl-card-btn, .bdl-open-wrap'))
+      n.remove();
+    return clone.textContent || '';
+  }
+
+  /** A tile's display name (its heading), lower-cased, for name sorting. */
+  function cardName(tile) {
+    const el = tile.querySelector('h3, h2, p.text-subs span, .truncate');
+    return ((el && el.textContent) || tileText(tile)).trim().toLowerCase();
+  }
+
+  /** A tile's file count — the largest integer in its (cleaned) text. */
+  function cardCount(tile) {
+    const nums = tileText(tile).match(/\d+/g);
+    return nums ? Math.max(...nums.map(Number)) : 0;
+  }
+
+  // ----- sorting -------------------------------------------------------------
+  let listingOriginalOrder = null; // captured once so "Default" can restore it
+
+  /** Add a sort dropdown (Default / Name A–Z / File count) above the grid. */
+  function setupSortControls() {
+    if (!settings.sortControls || !isListingPage()) return;
+    if (document.getElementById('bdl-sort')) return;
+    const grid = listingGrid();
+    if (!grid || !grid.parentElement) return;
+    listingOriginalOrder = [...grid.children];
+
+    const select = h('select', {
+      style:
+        'padding:4px 8px;border-radius:6px;background:#1c1c1e;color:#fff;border:1px solid #3a3a3c;font:inherit;',
+    });
+    for (const [val, text] of [
+      ['default', 'Default'],
+      ['name', 'Name (A–Z)'],
+      ['count', 'File count'],
+    ]) {
+      select.appendChild(h('option', { value: val }, text));
+    }
+    select.addEventListener('change', () => sortListing(select.value));
+    const wrap = h(
+      'div',
+      {
+        id: 'bdl-sort',
+        style:
+          'margin:10px 0;display:flex;gap:8px;align-items:center;font:13px system-ui,Arial,sans-serif;',
+      },
+      h('span', {}, 'Sort albums by:'),
+      select,
+    );
+    grid.parentElement.insertBefore(wrap, grid);
+  }
+
+  /** Reorder the grid's tiles by the chosen method (in place). "Default" restores
+   *  the captured original order (kept up to date as infinite scroll appends). */
+  function sortListing(method) {
+    const grid = listingGrid();
+    if (!grid) return;
+    if (method === 'default') {
+      if (listingOriginalOrder) for (const el of listingOriginalOrder) grid.appendChild(el);
+      return;
+    }
+    const tiles = [...new Set(listingCards().map((c) => cardTile(c, grid)))].filter(
+      (t) => t.parentElement === grid,
+    );
+    // Compute each key once (cardCount clones the tile), then sort.
+    const keyed = tiles.map((t) => ({ t, name: cardName(t), count: cardCount(t) }));
+    keyed.sort((a, b) =>
+      method === 'name'
+        ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+        : b.count - a.count,
+    );
+    for (const k of keyed) grid.appendChild(k.t);
+  }
+
+  // ----- infinite scroll -----------------------------------------------------
+  let scrollState = null; // { nextPage, loading, done } once armed
+
+  /** Auto-load the next listing page when a sentinel below the grid scrolls into
+   *  view. An IntersectionObserver avoids body-height math (which misfires on
+   *  scroll-container / positioned layouts and could auto-load every page). */
+  function setupInfiniteScroll() {
+    if (!settings.autoloadScroll || !isListingPage() || scrollState) return;
+    const grid = listingGrid();
+    if (!grid || !grid.parentElement) return;
+    const cur = Number(new URL(location.href).searchParams.get('page')) || 1;
+    scrollState = { nextPage: cur + 1, loading: false, done: false, io: null };
+    const sentinel = h('div', { id: 'bdl-scroll-sentinel', style: 'height:1px;width:100%;' });
+    grid.parentElement.insertBefore(sentinel, grid.nextSibling);
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (
+          scrollState &&
+          !scrollState.loading &&
+          !scrollState.done &&
+          entries.some((e) => e.isIntersecting)
+        ) {
+          loadNextListingPage();
+        }
+      },
+      { rootMargin: '600px' },
+    );
+    io.observe(sentinel);
+    scrollState.io = io;
+  }
+
+  /** Stop infinite scroll (no more pages, or an error). */
+  function endInfiniteScroll() {
+    if (!scrollState) return;
+    scrollState.done = true;
+    if (scrollState.io) scrollState.io.disconnect();
+  }
+
+  /** Strip inline event-handler attributes + javascript: hrefs from a subtree
+   *  imported from fetched HTML — defence in depth, since this is the one place
+   *  the script puts a listing site's own markup into the live DOM. */
+  function stripUnsafe(root) {
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      for (const attr of [...el.attributes]) {
+        if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
+      }
+      const href = el.getAttribute('href');
+      if (href && /^\s*javascript:/i.test(href)) el.removeAttribute('href');
+    }
+  }
+
+  /** Fetch the next page, append its album TILES, and re-decorate them. */
+  async function loadNextListingPage() {
+    const grid = listingGrid();
+    if (!grid) return;
+    scrollState.loading = true;
+    try {
+      const url = new URL(location.href);
+      url.searchParams.set('page', String(scrollState.nextPage));
+      const res = await gmRequest({ method: 'GET', url: url.href });
+      if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+      const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
+      const freshCards = [...doc.querySelectorAll('a[href*="/a/"]')].filter((a) => {
+        try {
+          const u = new URL(a.getAttribute('href'), url.href);
+          return BUNKR_HOST_RE.test(u.hostname) && BUNKR_ALBUM_RE.test(u.pathname);
+        } catch {
+          return false;
+        }
+      });
+      if (!freshCards.length) return endInfiniteScroll();
+      // Import each card's TILE (not the bare <a>) so wrapped-card grids append
+      // correctly; sanitise the fetched markup; keep the default-order list current.
+      const freshGrid = lcaOf(freshCards);
+      const tiles = [...new Set(freshCards.map((c) => cardTile(c, freshGrid)))];
+      for (const tile of tiles) {
+        const imported = document.importNode(tile, true);
+        stripUnsafe(imported);
+        grid.appendChild(imported);
+        if (listingOriginalOrder) listingOriginalOrder.push(imported);
+      }
+      scrollState.nextPage++;
+      // Re-decorate the newly appended cards.
+      setupBalbumsCards();
+      setupHoverPreviews();
+      const sel = document.querySelector('#bdl-sort select');
+      if (sel && sel.value !== 'default') sortListing(sel.value);
+    } catch (err) {
+      console.error('[BunkrDL] infinite scroll failed:', err);
+      endInfiniteScroll();
+    } finally {
+      if (scrollState) scrollState.loading = false;
+    }
+  }
+
+  // ----- hover previews ------------------------------------------------------
+
+  /** Attach a hover-preview strip to every album card (idempotent). On hover the
+   *  album's own manifest is fetched (GM_xhr) and its item thumbnails shown;
+   *  clicking a thumbnail opens that file. Cached per card after the first hover. */
+  function setupHoverPreviews() {
+    if (!settings.hoverPreviews || !isListingPage()) return;
+    for (const card of listingCards()) {
+      if (card.dataset.bdlPreview) continue;
+      card.dataset.bdlPreview = '1';
+      const strip = h('div', {
+        class: 'bdl-preview',
+        style:
+          'display:none;flex-wrap:wrap;gap:6px;padding:8px;margin-top:6px;background:#111;border-radius:6px;',
+      });
+      card.appendChild(strip);
+      let timer = null;
+      card.addEventListener('mouseenter', () => {
+        clearTimeout(timer); // avoid stacking timers on rapid re-entry
+        timer = setTimeout(() => {
+          if (card.matches(':hover')) showCardPreview(card, strip);
+        }, 220);
+      });
+      card.addEventListener('mouseleave', () => {
+        clearTimeout(timer);
+        strip.style.display = 'none';
+      });
+    }
+  }
+
+  /** Populate (once) and show a card's preview strip. */
+  async function showCardPreview(card, strip) {
+    if (strip.childElementCount) {
+      strip.style.display = 'flex';
+      return;
+    }
+    let albumUrl;
+    try {
+      const link = card.matches('a[href*="/a/"]') ? card : card.querySelector('a[href*="/a/"]');
+      albumUrl = link.href;
+    } catch {
+      return;
+    }
+    const note = (text) => {
+      strip.textContent = '';
+      strip.appendChild(h('span', { style: 'color:#aaa;font-size:12px;' }, text));
+      strip.style.display = 'flex';
+    };
+    try {
+      // Derive the file origin from the card's own (already validated) href, not
+      // album.base — robust even if the manifest base didn't parse.
+      const origin = new URL(albumUrl).origin;
+      const album = await fetchAlbum(albumUrl, false);
+      const items = album.items
+        .filter((it) => it.thumbnail)
+        .slice(0, Math.max(1, Number(settings.previewMax) || 12));
+      if (!items.length) return note('No preview thumbnails');
+      strip.textContent = '';
+      for (const it of items) {
+        const img = h('img', {
+          src: it.thumbnail,
+          alt: '',
+          loading: 'lazy',
+          style: 'width:92px;height:92px;object-fit:cover;border-radius:4px;cursor:pointer;',
+        });
+        const fileUrl = `${origin}/f/${encodeURIComponent(it.slug)}`;
+        img.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open(fileUrl, '_blank', 'noopener');
+        });
+        strip.appendChild(img);
+      }
+      strip.style.display = 'flex';
+    } catch (err) {
+      console.error('[BunkrDL] preview failed:', err);
+      note('Preview unavailable');
+    }
+  }
+
+  /** Wire up the listing-page features (called from boot on a listing host). */
+  function setupListingFeatures() {
+    setupSortControls();
+    setupInfiniteScroll();
+    setupHoverPreviews();
+  }
+
   // Cached slug/name → display-name map for the current album, built from the
   // advanced view once and reused by every per-item button (purely cosmetic — it
   // supplies a nicer filename; the numeric id and resolver host always come from
@@ -2017,6 +2362,11 @@
       'on (manager saves — no per-file dialog; best for no-ZIP Download All)',
       'off (browser <a> download)',
     );
+    // Listing-page enhancements (balbums.st / bunkr-albums.io).
+    toggle('Listing: sort dropdown', 'sortControls');
+    toggle('Listing: infinite scroll', 'autoloadScroll');
+    toggle('Listing: hover previews', 'hoverPreviews');
+    num('Listing: max preview thumbnails', 'previewMax', '');
     add('Clear resume data (all albums)', () => {
       const n = clearAllResume();
       notify('BunkrDL', `Cleared resume data for ${n} album(s).`);
@@ -2034,13 +2384,19 @@
   function boot() {
     registerMenu();
 
-    // balbums listing pages: add per-card buttons (cards also load via scroll).
-    if (/(^|\.)balbums\.st$/i.test(location.hostname)) {
+    // Listing pages (balbums.st / bunkr-albums.io): per-card download buttons +
+    // the sort / infinite-scroll / hover-preview enhancements. Cards can load
+    // late or via scroll, so re-run on mutations (all setups are idempotent).
+    if (isListingPage()) {
       setupBalbumsCards();
+      setupListingFeatures();
       let pending = null;
       const obs = new MutationObserver(() => {
         clearTimeout(pending);
-        pending = setTimeout(setupBalbumsCards, 300);
+        pending = setTimeout(() => {
+          setupBalbumsCards();
+          setupListingFeatures();
+        }, 300);
       });
       obs.observe(document.body, { childList: true, subtree: true });
       return;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.6.1
+// @version       1.7.0
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -266,6 +266,63 @@
     for (const c of kids)
       if (c != null) node.append(c.nodeType ? c : document.createTextNode(String(c)));
     return node;
+  }
+
+  /** Create an SVG element (createElement uses the HTML namespace — SVG needs its
+   *  own namespace or it renders blank). */
+  function svgEl(tag, attrs) {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const [k, v] of Object.entries(attrs || {})) if (v != null) node.setAttribute(k, v);
+    return node;
+  }
+
+  /** This userscript's version, from the manager metadata (falls back to ''). */
+  function scriptVersion() {
+    try {
+      return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Milliseconds → "m:ss" (or "h:mm:ss"); '' for missing/zero. */
+  function formatDuration(ms) {
+    const total = Math.round((Number(ms) || 0) / 1000);
+    if (!total) return '';
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h
+      ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+      : `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  // Apple logo glyph (simple-icons, viewBox 0 0 814 1000) for the Mastered-for-
+  // iTunes badge — nominative use to denote Apple's "Apple Digital Master".
+  const APPLE_GLYPH =
+    'M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z';
+
+  /** The "Mastered for iTunes" (Apple Digital Master) badge — an SVG Apple glyph +
+   *  wordmark; full-strength when mastered, dimmed otherwise. */
+  function masteredBadge(isMastered) {
+    const svg = svgEl('svg', {
+      viewBox: '0 0 814 1000',
+      width: '11',
+      height: '14',
+      'aria-hidden': 'true',
+    });
+    svg.append(svgEl('path', { d: APPLE_GLYPH, fill: 'currentColor' }));
+    return el(
+      'span',
+      {
+        class: `itam-mfit${isMastered ? '' : ' off'}`,
+        title: isMastered
+          ? 'Apple Digital Master (Mastered for iTunes)'
+          : 'Not an Apple Digital Master',
+      },
+      svg,
+      'Mastered for iTunes',
+    );
   }
 
   function toast(text) {
@@ -841,6 +898,7 @@
           artist: t.attributes.artistName || '',
           composer: t.attributes.composerName,
           isrc: t.attributes.isrc || '',
+          durationMillis: t.attributes.durationInMillis || 0,
           releaseDate: t.attributes.releaseDate || '',
           // Lyrics availability flags (gate the Download Lyrics tiers). Kept RAW —
           // may be undefined if amp-api omits them for album tracks (verify
@@ -871,6 +929,7 @@
           name: a.name || '',
           artist: a.artistName || '',
           isrc: a.isrc || '',
+          durationMillis: a.durationInMillis || 0,
           releaseDate: a.releaseDate || '',
           hasLyrics: a.hasLyrics,
           hasTimeSyncedLyrics: a.hasTimeSyncedLyrics,
@@ -933,6 +992,7 @@
     const ps = [...doc.getElementsByTagName('p')];
     if (!ps.length) return null;
     let wordTimed = false;
+    let lineTimed = false;
     const lines = ps.map((p) => {
       const words = [...p.getElementsByTagName('span')]
         .filter((sp) => sp.getAttribute('begin'))
@@ -942,6 +1002,7 @@
           text: sp.textContent || '',
         }));
       if (words.length) wordTimed = true;
+      if (p.getAttribute('begin')) lineTimed = true;
       return {
         begin: ttmlTimeToSec(p.getAttribute('begin')),
         end: ttmlTimeToSec(p.getAttribute('end')),
@@ -949,7 +1010,7 @@
         words,
       };
     });
-    return { wordTimed, lines };
+    return { wordTimed, lineTimed, lines };
   }
 
   /** Enhanced "A2" word-LRC: "[mm:ss.cc]<mm:ss.cc>word<mm:ss.cc>word…" per line.
@@ -992,22 +1053,42 @@
     return typeof ttml === 'string' && ttml ? ttml : null;
   }
 
-  /** Resolve one track's lyrics in the requested tier, with fallback (word→line; either
-   *  endpoint feeds static). Returns { text, ext } or null. */
+  /** Resolve one track's lyrics in the requested tier, AUTOMATICALLY FALLING BACK
+   *  to the next-best available format when the track lacks the preferred one:
+   *    word  → line → static
+   *    line  → static
+   *    static
+   *  (the preferred format is whatever was picked from the Download Lyrics menu.)
+   *  Returns { text, ext, kind } — `kind` is the format actually produced
+   *  ('word'|'line'|'static') — or null when the track has no lyrics at all. */
   async function trackLyrics(country, songId, tier, devToken, userToken) {
-    const order = tier === 'word' ? ['syllable-lyrics', 'lyrics'] : ['lyrics', 'syllable-lyrics'];
-    let parsed = null;
-    for (const kind of order) {
+    // syllable-lyrics carries WORD timing; lyrics carries LINE timing + the text
+    // (and is the static source). Only fetch the word endpoint when it's wanted.
+    const kinds = tier === 'word' ? ['syllable-lyrics', 'lyrics'] : ['lyrics'];
+    let best = null; // richest parse seen (prefer the word-timed one)
+    for (const kind of kinds) {
       const ttml = await fetchLyricsTtml(country, songId, kind, devToken, userToken);
-      if (ttml) {
-        parsed = parseLyricsTtml(ttml);
-        if (parsed && parsed.lines.length) break;
-      }
+      if (!ttml) continue;
+      const parsed = parseLyricsTtml(ttml);
+      if (!parsed || !parsed.lines.length) continue;
+      // Keep the richest parse: a word-timed one always wins; otherwise a
+      // line-timed one beats an untimed one (covers a word endpoint that parsed
+      // but carried no usable timing, so the line endpoint is still preferred).
+      if (
+        !best ||
+        (parsed.wordTimed && !best.wordTimed) ||
+        (!best.wordTimed && !best.lineTimed && parsed.lineTimed)
+      )
+        best = parsed;
+      if (parsed.wordTimed) break; // already the richest form — stop early
     }
-    if (!parsed || !parsed.lines.length) return null;
-    if (tier === 'static') return { text: lyricsToPlain(parsed), ext: 'txt' };
-    if (tier === 'word' && parsed.wordTimed) return { text: lyricsToWordLrc(parsed), ext: 'lrc' };
-    return { text: lyricsToLineLrc(parsed), ext: 'lrc' }; // line, or word with only line timing
+    if (!best || !best.lines.length) return null;
+    // Step down from the requested tier to whatever the data actually supports.
+    if (tier === 'word' && best.wordTimed)
+      return { text: lyricsToWordLrc(best), ext: 'lrc', kind: 'word' };
+    if (tier !== 'static' && best.lineTimed)
+      return { text: lyricsToLineLrc(best), ext: 'lrc', kind: 'line' };
+    return { text: lyricsToPlain(best), ext: 'txt', kind: 'static' };
   }
 
   /** "<disc> - <NN> - <title>" filename stem (track number zero-padded). */
@@ -1030,38 +1111,51 @@
     return { word: anySynced, line: anySynced, static: anyLyrics };
   }
 
-  /** Download the entity's lyrics in `tier` ('word'|'line'|'static'). Album → a ZIP of
-   *  per-track files; single song → one file. Tracks without lyrics are skipped.
+  const TIER_RANK = { word: 3, line: 2, static: 1 };
+
+  /** Download the entity's lyrics in `tier` ('word'|'line'|'static'). Album → a ZIP
+   *  of per-track files; single song → one file. Each track independently falls
+   *  back to the next-best format it has (see trackLyrics), and tracks with no
+   *  lyrics are skipped. Per-track failures are isolated, and EVERY outcome ends
+   *  in a toast — so a single bad track (or any error) can never fail silently,
+   *  which is what made an earlier word-by-word download "do nothing".
    *  Requires a logged-in subscriber session (the endpoints need the user token). */
   async function downloadLyrics(model, tier) {
     const tierLabel = { word: 'word-by-word', line: 'line-by-line', static: 'static' }[tier];
-    const tracks = model.tracks.filter((t) => t.id);
-    if (!tracks.length) return toast('No tracks to fetch lyrics for');
-    const userToken = getUserToken();
-    if (!userToken) return toast('Log in to Apple Music to download lyrics');
-    let devToken;
     try {
-      devToken = await getDevToken();
-    } catch (err) {
-      return toast(`Lyrics failed: ${err.message}`);
-    }
-    toast(`Fetching ${tierLabel} lyrics…`);
-    const out = [];
-    for (const t of tracks) {
-      const lyr = await trackLyrics(model.country, t.id, tier, devToken, userToken);
-      if (lyr) out.push({ t, ...lyr });
-    }
-    if (!out.length) return toast('No downloadable lyrics found for this release');
+      const tracks = model.tracks.filter((t) => t.id);
+      if (!tracks.length) return toast('No tracks to fetch lyrics for');
+      const userToken = getUserToken();
+      if (!userToken) return toast('Log in to Apple Music to download lyrics');
+      const devToken = await getDevToken();
+      toast(`Fetching ${tierLabel} lyrics…`);
 
-    if (model.kind !== 'album' || out.length === 1) {
-      const r = out[0];
-      downloadBlob(
-        new Blob([r.text], { type: 'text/plain;charset=utf-8' }),
-        `${lyricsFileStem(r.t)}.${r.ext}`,
-      );
-      return toast('Lyrics saved ✓');
-    }
-    try {
+      const out = [];
+      const fellBack = new Set();
+      for (const t of tracks) {
+        let lyr = null;
+        try {
+          lyr = await trackLyrics(model.country, t.id, tier, devToken, userToken);
+        } catch (err) {
+          // Isolate a bad track so it can't abort the whole batch.
+          console.warn('[ITAM] lyrics failed for track', t.name, err);
+        }
+        if (lyr) {
+          out.push({ t, ...lyr });
+          if ((TIER_RANK[lyr.kind] || 0) < (TIER_RANK[tier] || 0)) fellBack.add(lyr.kind);
+        }
+      }
+      if (!out.length) return toast('No downloadable lyrics found for this release');
+      const note = fellBack.size ? ` (some fell back to ${[...fellBack].sort().join(' / ')})` : '';
+
+      if (model.kind !== 'album' || out.length === 1) {
+        const r = out[0];
+        downloadBlob(
+          new Blob([r.text], { type: 'text/plain;charset=utf-8' }),
+          `${lyricsFileStem(r.t)}.${r.ext}`,
+        );
+        return toast(`Lyrics saved ✓${note}`);
+      }
       const zip = new JSZip();
       for (const r of out) zip.file(`${lyricsFileStem(r.t)}.${r.ext}`, r.text);
       const tag = tierLabel.replace(/[^a-z]/gi, '');
@@ -1069,9 +1163,9 @@
         await zip.generateAsync({ type: 'blob' }),
         `${safeName(model.artist)} - ${safeName(model.name)}_Lyrics_${tag}.zip`,
       );
-      toast(`Lyrics ZIP saved (${out.length} tracks) ✓`);
+      toast(`Lyrics ZIP saved (${out.length} of ${tracks.length} tracks)${note} ✓`);
     } catch (err) {
-      toast(`Lyrics ZIP failed: ${err.message}`);
+      toast(`Lyrics failed: ${err.message}`);
     }
   }
 
@@ -1431,7 +1525,9 @@
     .itam-dd-item:hover { background:#fa2d48; color:#fff; }
     .itam-overlay { position:fixed; inset:0; z-index:2147483647; background:rgba(0,0,0,.55);
       display:flex; align-items:flex-start; justify-content:center; padding:5vh 12px; }
-    .itam-panel { width:760px; max-width:96vw; max-height:90vh; overflow:auto;
+    /* Width grows with the viewport (up to a cap) and shrinks on narrow screens;
+       container-type lets the track table hide columns responsively (below). */
+    .itam-panel { width:min(1200px,94vw); max-height:90vh; overflow:auto; container-type:inline-size;
       background:#1c1c1e; color:#f2f2f7; border:1px solid #3a3a3c; border-radius:14px;
       padding:18px 20px; font:14px/1.5 system-ui,-apple-system,sans-serif;
       box-shadow:0 18px 50px rgba(0,0,0,.6); }
@@ -1452,6 +1548,13 @@
     .itam-isrc:hover { color:#fa2d48; }
     .itam-close { float:right; background:none; border:0; color:#aeaeb2; font-size:22px; cursor:pointer; line-height:1; }
     .itam-foot { margin-top:10px; font-size:11px; color:#8e8e93; }
+    .itam-col-len, .itam-table th.itam-col-len { text-align:right; white-space:nowrap; }
+    .itam-mfit { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px;
+      border:1px solid currentColor; font:600 12px/1 system-ui,sans-serif; }
+    .itam-mfit svg { display:block; }
+    .itam-mfit.off { opacity:.4; }
+    /* Hide the Composer column when the panel is too narrow to fit it. */
+    @container (max-width: 620px) { .itam-col-composer { display:none; } }
     @media (prefers-color-scheme: light) {
       .itam-panel { background:#fff; color:#1c1c1e; border-color:#d1d1d6; }
       .itam-dd-menu { background:#fff; color:#1c1c1e; border-color:#d1d1d6; }
@@ -1485,6 +1588,16 @@
     return wrap;
   }
 
+  /** Invoke a control's action, surfacing any error — including from a rejected
+   *  async action — as a toast, so a failed download can never be silent. */
+  function runAction(fn) {
+    try {
+      Promise.resolve(fn()).catch((err) => toast(`Failed: ${err.message}`));
+    } catch (err) {
+      toast(`Failed: ${err.message}`);
+    }
+  }
+
   /** Generic action control: a single button when there's one option, else a
    *  dropdown (▾) listing them. `opts` is [[label, fn], …]; returns null if empty.
    *  `btnClass` styles the trigger for the header (`itam-chip`) or panel (`itam-btn`).
@@ -1492,7 +1605,12 @@
   function ddControl(btnClass, label, title, opts) {
     if (!opts.length) return null;
     if (opts.length === 1) {
-      return el('button', { class: btnClass, text: label, title, onclick: opts[0][1] });
+      return el('button', {
+        class: btnClass,
+        text: label,
+        title,
+        onclick: () => runAction(opts[0][1]),
+      });
     }
     const wrap = el('div', { class: 'itam-dd' });
     const trigger = el('button', { class: btnClass, text: `${label} ▾`, title });
@@ -1509,7 +1627,7 @@
           onclick: (e) => {
             e.stopPropagation();
             wrap.classList.remove('open');
-            fn();
+            runAction(fn);
           },
         }),
       );
@@ -1547,12 +1665,27 @@
    *  heading whose text matches the entity name, else the first non-empty heading
    *  near the top. */
   function findTitleAnchor(name) {
-    const headings = document.querySelectorAll('h1, h2, [role="heading"]');
-    if (name) {
-      const needle = name.trim().slice(0, 40);
-      for (const h of headings) if ((h.textContent || '').trim().startsWith(needle)) return h;
+    const all = [...document.querySelectorAll('h1, h2, [role="heading"]')];
+    const main = document.querySelector('main');
+    // Scope the title match to <main> so a nav/sidebar/shelf heading can't win.
+    const scoped = main ? [...main.querySelectorAll('h1, h2, [role="heading"]')] : all;
+    // Shorter, case-insensitive needle — robust to edition suffixes, trailing
+    // whitespace and minor title differences between the amp-api name and the
+    // rendered heading. Prefer a STARTS-WITH match; only then fall back to a
+    // (scoped) CONTAINS match, so a one-word title can't grab a shelf heading.
+    const needle = (name || '').trim().toLowerCase().slice(0, 24);
+    if (needle) {
+      for (const h of scoped) {
+        if ((h.textContent || '').trim().toLowerCase().startsWith(needle)) return h;
+      }
+      for (const h of scoped) {
+        if ((h.textContent || '').trim().toLowerCase().includes(needle)) return h;
+      }
     }
-    for (const h of headings) if ((h.textContent || '').trim()) return h;
+    // Otherwise the album title is the main <h1>; fall back to any non-empty heading.
+    const h1 = (main || document).querySelector('h1');
+    if (h1 && (h1.textContent || '').trim()) return h1;
+    for (const h of all) if ((h.textContent || '').trim()) return h;
     return null;
   }
 
@@ -1671,7 +1804,7 @@
     panel.append(fact('Released', model.releaseDate));
     panel.append(fact('Copyright', model.copyright));
     if (model.masteredForItunes != null) {
-      panel.append(fact('Mastered for iTunes', model.masteredForItunes ? 'Yes' : 'No'));
+      panel.append(el('div', { class: 'itam-row' }, masteredBadge(model.masteredForItunes)));
     }
 
     // --- action buttons (barcode/ISRC actions only when that feature is on) --
@@ -1763,17 +1896,23 @@
       // one track names its parent work. Cells are blank for tracks without one,
       // so non-classical releases never grow the column.
       const showWorkCol = settings.classicalInfo && model.tracks.some((t) => t.workName);
+      // A track length column is always shown; Composer carries a class so it can
+      // be hidden responsively (via a container query) when the panel is narrow.
       const table = el('table', { class: 'itam-table' });
       const headRow = el('tr');
-      [
-        '#',
-        'Title',
-        ...(showWorkCol ? ['Work'] : []),
-        'Artist',
-        ...(hasComposer ? ['Composer'] : []),
-        'ISRC',
-        ...(showFormatsCol ? ['Formats'] : []),
-      ].forEach((h) => headRow.append(el('th', { text: h })));
+      const cols = [
+        { t: '#' },
+        { t: 'Title' },
+        ...(showWorkCol ? [{ t: 'Work' }] : []),
+        { t: 'Artist' },
+        ...(hasComposer ? [{ t: 'Composer', cls: 'itam-col-composer' }] : []),
+        { t: 'ISRC' },
+        { t: 'Length', cls: 'itam-col-len' },
+        ...(showFormatsCol ? [{ t: 'Formats' }] : []),
+      ];
+      cols.forEach((c) =>
+        headRow.append(el('th', c.cls ? { text: c.t, class: c.cls } : { text: c.t })),
+      );
       table.append(el('thead', {}, headRow));
       const tbody = el('tbody');
       for (const t of model.tracks) {
@@ -1784,13 +1923,20 @@
         // movement pieces, or non-classical tracks).
         if (showWorkCol) tr.append(el('td', { text: t.workName || '' }));
         tr.append(el('td', { text: t.artist }));
-        if (hasComposer) tr.append(el('td', { text: t.composer || '' }));
+        if (hasComposer)
+          tr.append(el('td', { class: 'itam-col-composer', text: t.composer || '' }));
         tr.append(
           el('td', {
             class: 'itam-mono itam-isrc',
             text: t.isrc || '—',
             title: t.isrc ? 'Click to copy' : '',
             onclick: () => t.isrc && copy(t.isrc, 'ISRC copied'),
+          }),
+        );
+        tr.append(
+          el('td', {
+            class: 'itam-mono itam-col-len',
+            text: formatDuration(t.durationMillis) || '—',
           }),
         );
         // Render this track's badges only when it actually differs (blank cell
@@ -1811,6 +1957,7 @@
         text: `Session: ${model.loggedIn ? 'logged in (user token sent)' : 'anonymous (catalog only)'} · data from Apple Music`,
       }),
     );
+    panel.append(el('div', { class: 'itam-foot', text: `ITAM Enhancer v${scriptVersion()}` }));
 
     document.body.append(overlay);
   }
@@ -2008,26 +2155,34 @@
   /** On a supported page, fetch (cached) the entity and inject the inline header
    *  UI: format badges (albums) + the action row. Best-effort — the floating
    *  launcher still works on demand if nothing can be placed. */
+  let headerUIBusy = false; // serialise attempts so only one fetchEntity runs at a time
   async function maybeHeaderUI() {
+    if (headerUIBusy) return;
     const page = parsePage();
     if (!page) return;
     const wantBadges = settings.showFormats && settings.autoBadges && page.type === 'album';
     const wantActions =
       settings.showBarcodeIsrc ||
       settings.coverArt ||
+      settings.downloadLyrics ||
+      settings.iswcLookup ||
       (settings.harmonyLookup && page.type === 'album');
     if (!wantBadges && !wantActions) return;
+    headerUIBusy = true;
     try {
       const model = await fetchEntity(page);
       if (page.type === 'album') injectBadges(model);
       injectActions(model, page);
     } catch {
       /* token/API not ready or failed — launcher still works on demand */
+    } finally {
+      headerUIBusy = false;
     }
   }
 
   /** Run on initial load and on every SPA route change. */
   let lastPath = '';
+  let placeStop = null;
   function onRoute() {
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
@@ -2035,14 +2190,54 @@
     document.querySelector('.itam-badges')?.remove();
     document.querySelector('.itam-inline-actions')?.remove();
     ensureLauncher();
-    // The new view renders asynchronously; retry placement a few times.
-    let tries = 0;
-    const tick = setInterval(() => {
+    placeHeaderUI();
+  }
+
+  /** Place the inline header UI, RETRYING UNTIL IT LANDS. Apple Music renders the
+   *  album header (and resolves the MusicKit token) at very different times across
+   *  albums — ones with an editorial synopsis or many tracks render notably later —
+   *  so the old fixed ~5s retry window left the badges/buttons missing on those
+   *  (while the on-demand panel always worked). A MutationObserver plus a bounded
+   *  poll keep trying until placed, or ~30s. fetchEntity is cached and
+   *  maybeHeaderUI is serialised, so repeated attempts are cheap. */
+  function placeHeaderUI() {
+    if (placeStop) placeStop(); // cancel a previous route's attempts
+    const page = parsePage();
+    const placed = () =>
+      document.querySelector('.itam-inline-actions') || document.querySelector('.itam-badges');
+    const deadline = Date.now() + 20000; // overall cap (mostly waiting for the token)
+    let settledAt = 0; // when the model first became available (cached)
+    let debounce = null;
+    const attempt = () => {
+      if (placed() || Date.now() > deadline) return stop();
+      // Once the model is cached the header renders quickly — so if nothing has
+      // been placed ~3s after the data is ready, there is simply nothing to place
+      // here (e.g. a logged-out song page); stop, rather than churn for 20s.
+      if (page && entityCache.has(page.id)) {
+        if (!settledAt) settledAt = Date.now();
+        else if (Date.now() - settledAt > 3000) return stop();
+      }
       maybeHeaderUI();
-      const placed =
-        document.querySelector('.itam-inline-actions') || document.querySelector('.itam-badges');
-      if (placed || ++tries > 8) clearInterval(tick);
-    }, 600);
+    };
+    // Debounce the (very chatty) SPA mutations so attempt() runs at most ~4×/s.
+    const schedule = () => {
+      if (debounce) return;
+      debounce = setTimeout(() => {
+        debounce = null;
+        attempt();
+      }, 250);
+    };
+    const obs = new MutationObserver(schedule);
+    obs.observe(document.body, { childList: true, subtree: true });
+    const poll = setInterval(attempt, 700);
+    function stop() {
+      obs.disconnect();
+      clearInterval(poll);
+      if (debounce) clearTimeout(debounce);
+      if (placeStop === stop) placeStop = null;
+    }
+    placeStop = stop;
+    attempt();
   }
 
   // Apple Music navigates via the History API; observe pushState/replaceState

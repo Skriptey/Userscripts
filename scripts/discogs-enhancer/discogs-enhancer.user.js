@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Discogs Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.0.0
+// @version       1.0.1
 // @description   Discogs Enhancer — on discogs.com release pages, gives a clean structured panel + one-click copy/export of the barcode, catalog number, label, format and the full credits, plus a Harmony cross-service lookup (and a MagicISRC link when ISRCs are present). A Discogs-flavoured sibling of ITAM Enhancer (public no-auth API).
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -357,13 +357,31 @@
   //  Section 6 — UI (header button + panel)
   // -------------------------------------------------------------------------
 
+  /** Find the release-title heading (robust to Discogs' volatile class names): the
+   *  heading whose text matches the entity name, else the first non-empty heading
+   *  near the top. */
   function findTitleAnchor(name) {
-    const headings = document.querySelectorAll('h1, [role="heading"]');
-    if (name) {
-      const needle = name.trim().slice(0, 30);
-      for (const h of headings) if ((h.textContent || '').includes(needle)) return h;
+    const all = [...document.querySelectorAll('h1, h2, [role="heading"]')];
+    const main = document.querySelector('main');
+    // Scope the title match to <main> so a nav/sidebar/shelf heading can't win.
+    const scoped = main ? [...main.querySelectorAll('h1, h2, [role="heading"]')] : all;
+    // Shorter, case-insensitive needle — robust to edition suffixes, trailing
+    // whitespace and minor title differences between the API title and the
+    // rendered heading. Prefer a STARTS-WITH match; only then fall back to a
+    // (scoped) CONTAINS match, so a one-word title can't grab a shelf heading.
+    const needle = (name || '').trim().toLowerCase().slice(0, 24);
+    if (needle) {
+      for (const h of scoped) {
+        if ((h.textContent || '').trim().toLowerCase().startsWith(needle)) return h;
+      }
+      for (const h of scoped) {
+        if ((h.textContent || '').trim().toLowerCase().includes(needle)) return h;
+      }
     }
-    for (const h of headings) if ((h.textContent || '').trim()) return h;
+    // Otherwise the release title is the main <h1>; fall back to any non-empty heading.
+    const h1 = (main || document).querySelector('h1');
+    if (h1 && (h1.textContent || '').trim()) return h1;
+    for (const h of all) if ((h.textContent || '').trim()) return h;
     return null;
   }
 
@@ -602,27 +620,76 @@
     document.body.appendChild(btn);
   }
 
+  let headerUIBusy = false; // serialise attempts so only one fetchEntity runs at a time
   async function maybeHeaderUI() {
+    if (headerUIBusy) return;
     const page = parsePage();
     if (!page) return;
+    headerUIBusy = true;
     try {
       injectHeaderUI(await fetchEntity(page));
     } catch {
       /* API not ready / failed — launcher still works on demand */
+    } finally {
+      headerUIBusy = false;
     }
   }
 
   let lastPath = '';
+  let placeStop = null;
   function onRoute() {
     if (location.pathname === lastPath) return;
     lastPath = location.pathname;
+    // Clear stale inline UI from the previous view.
     document.querySelector('.dge-actions')?.remove();
     ensureLauncher();
-    let tries = 0;
-    const tick = setInterval(() => {
+    placeHeaderUI();
+  }
+
+  /** Place the inline header UI, RETRYING UNTIL IT LANDS. Discogs renders the
+   *  release header at very different times across pages — long tracklists /
+   *  credit blocks render notably later — so the old fixed ~5s retry window left
+   *  the buttons missing on those (while the on-demand panel always worked). A
+   *  MutationObserver plus a bounded poll keep trying until placed, or ~15s.
+   *  fetchEntity is cached and maybeHeaderUI is serialised, so repeated attempts
+   *  are cheap. */
+  function placeHeaderUI() {
+    if (placeStop) placeStop(); // cancel a previous route's attempts
+    const page = parsePage();
+    const placed = () => document.querySelector('.dge-actions');
+    const deadline = Date.now() + 15000; // overall cap
+    let settledAt = 0; // when the model first became available (cached)
+    let debounce = null;
+    const attempt = () => {
+      if (placed() || Date.now() > deadline) return stop();
+      // Once the model is cached the header renders quickly — so if nothing has
+      // been placed ~3s after the data is ready, there is simply nothing to place
+      // here; stop, rather than churn for the full deadline.
+      if (page && entityCache.has(page.id)) {
+        if (!settledAt) settledAt = Date.now();
+        else if (Date.now() - settledAt > 3000) return stop();
+      }
       maybeHeaderUI();
-      if (document.querySelector('.dge-actions') || ++tries > 8) clearInterval(tick);
-    }, 600);
+    };
+    // Debounce the (chatty) SPA mutations so attempt() runs at most ~4×/s.
+    const schedule = () => {
+      if (debounce) return;
+      debounce = setTimeout(() => {
+        debounce = null;
+        attempt();
+      }, 250);
+    };
+    const obs = new MutationObserver(schedule);
+    obs.observe(document.body, { childList: true, subtree: true });
+    const poll = setInterval(attempt, 700);
+    function stop() {
+      obs.disconnect();
+      clearInterval(poll);
+      if (debounce) clearTimeout(debounce);
+      if (placeStop === stop) placeStop = null;
+    }
+    placeStop = stop;
+    attempt();
   }
 
   function hookHistory(method) {

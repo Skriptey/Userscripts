@@ -43,12 +43,21 @@ bottom-right). It opens a dropdown:
 Each **file card in the grid** also gets a **“⬇ Download”** button that fetches
 just that one file (saved directly, no ZIP).
 
-### On balbums.st listing pages
+### On balbums.st / bunkr-albums.io listing pages
 
 On the search results, `/live`, `/topalbums`, `/topvideos`, `/topfiles`, and
 `/topimages` pages, a small **“⬇ Download ▾”** button is added under each album
 card. Picking a type fetches that album from Bunkr and runs the same flow.
-Buttons are also added to cards that load later via infinite scroll.
+
+Three **listing enhancements** are also added (each independently toggleable in
+the menu, and each a no-op if the page layout isn't recognised):
+
+- **Sort dropdown** — reorder the album grid by **Default**, **Name (A–Z)**, or
+  **File count** (most files first).
+- **Infinite scroll** — automatically loads the next page of albums as you near
+  the bottom (new cards get download buttons + previews too).
+- **Hover previews** — hover an album card to fetch its manifest and show a strip
+  of item **thumbnails**; click a thumbnail to open that file. Cached per album.
 
 ### On a single Bunkr file page
 
@@ -91,7 +100,9 @@ sometimes `%20`/`%xx`); BunkrDL turns these back into real characters, so
 closes (or some files fail) mid-album, re-running the same album downloads only
 what's missing and continues the ZIP numbering. Each download is checked against
 the manifest's expected size and retried if it came up short. (Use **Clear resume
-data** in the menu to forget all saved progress.)
+data** in the menu to forget all saved progress.) **Cancelling** stops fetching
+new files but still **saves anything already downloaded** (and records it for
+resume), so you don't lose completed files.
 
 ## Settings
 
@@ -99,22 +110,26 @@ Open your userscript manager's menu (click the manager's toolbar icon while on a
 supported page) and use the **BunkrDL** commands. Settings persist via the
 manager's storage.
 
-| Setting                 | Default    | Notes                                                                                                  |
-| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
-| Max ZIP size            | `1024` MiB | Target cap per ZIP. Also bounds memory — see below.                                                    |
-| Delay between files     | `1500` ms  | Base pause before each file (rate limiting).                                                           |
-| Delay jitter            | `750` ms   | Random `0..jitter` added to each pause.                                                                |
-| Max retries per file    | `4`        | Attempts before a file is counted as failed.                                                           |
-| Parallel downloads      | `1`        | Files fetched at once (1–8). Higher = faster, but more rate-limit/ban risk.                            |
-| Oversize file handling  | `ask`      | `ask` \| `extend` \| `skip` (see above).                                                               |
-| ZIP bundling            | `on`       | Off = save each file individually instead of zipping. Changing it applies to the **next** download.    |
-| Compression             | `STORE`    | `STORE` (fast, no recompress — best for already-compressed media) or `DEFLATE`.                        |
-| Pre-flight confirmation | `on`       | Show a summary (count, size, # ZIPs) and confirm before a job starts.                                  |
-| Verify file sizes       | `on`       | Re-download files whose bytes fall short of the manifest size.                                         |
-| Resume support          | `on`       | Remember completed files so an interrupted album resumes.                                              |
-| Save via GM_download    | `off`      | Manager saves (ZIPs & individual files) with no per-file dialog — recommended for no-ZIP Download All. |
-| Clear resume data       | —          | Forget saved progress for all albums.                                                                  |
-| Reset to defaults       | —          | Restores every setting above.                                                                          |
+| Setting                     | Default    | Notes                                                                                                  |
+| --------------------------- | ---------- | ------------------------------------------------------------------------------------------------------ |
+| Max ZIP size                | `1024` MiB | Target cap per ZIP. Also bounds memory — see below.                                                    |
+| Delay between files         | `1500` ms  | Base pause before each file (rate limiting).                                                           |
+| Delay jitter                | `750` ms   | Random `0..jitter` added to each pause.                                                                |
+| Max retries per file        | `4`        | Attempts before a file is counted as failed.                                                           |
+| Parallel downloads          | `1`        | Files fetched at once (1–8). Higher = faster, but more rate-limit/ban risk.                            |
+| Oversize file handling      | `ask`      | `ask` \| `extend` \| `skip` (see above).                                                               |
+| ZIP bundling                | `on`       | Off = save each file individually instead of zipping. Changing it applies to the **next** download.    |
+| Compression                 | `STORE`    | `STORE` (fast, no recompress — best for already-compressed media) or `DEFLATE`.                        |
+| Pre-flight confirmation     | `on`       | Show a summary (count, size, # ZIPs) and confirm before a job starts.                                  |
+| Verify file sizes           | `on`       | Re-download files whose bytes fall short of the manifest size.                                         |
+| Resume support              | `on`       | Remember completed files so an interrupted album resumes.                                              |
+| Save via GM_download        | `off`      | Manager saves (ZIPs & individual files) with no per-file dialog — recommended for no-ZIP Download All. |
+| Listing: sort dropdown      | `on`       | Show the Default / Name / File-count sort control on listing pages.                                    |
+| Listing: infinite scroll    | `on`       | Auto-load the next page of albums near the bottom.                                                     |
+| Listing: hover previews     | `on`       | Hover an album card to preview its item thumbnails (clicking one opens the file).                      |
+| Listing: max preview thumbs | `12`       | Cap on thumbnails shown in a hover preview.                                                            |
+| Clear resume data           | —          | Forget saved progress for all albums.                                                                  |
+| Reset to defaults           | —          | Restores every setting above.                                                                          |
 
 > **Memory note:** ZIP building happens **in the browser tab**, so peak memory is
 > roughly `2 × Max ZIP size` while a ZIP is generated, plus one in-flight file per
@@ -213,10 +228,11 @@ This script ships verbatim (no build step) so you can read every line.
   `textContent`).
 - **Grants** are limited to what the features need: `GM_xmlhttpRequest`
   (cross-origin download), `GM_setValue`/`GM_getValue`/`GM_deleteValue`/`GM_listValues`
-  (settings + resume storage), `GM_registerMenuCommand` (settings menu),
-  `GM_notification` (status), `GM_addStyle` (UI), `GM_download` (optional save
-  path; otherwise ZIPs save via a plain `<a download>` click), and `unsafeWindow`
-  (read `window.albumFiles`).
+  (settings + resume storage), `GM_registerMenuCommand` /
+  `GM_unregisterMenuCommand` (the settings menu, re-registered so its
+  "(current: …)" labels refresh), `GM_notification` (status), `GM_addStyle` (UI),
+  `GM_download` (optional save path; otherwise ZIPs save via a plain
+  `<a download>` click), and `unsafeWindow` (read `window.albumFiles`).
 
 ## Troubleshooting
 
