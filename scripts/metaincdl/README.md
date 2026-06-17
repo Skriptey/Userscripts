@@ -48,11 +48,23 @@ A floating **⬇ Download ▾** button opens a dropdown:
 Bulk runs **auto-load the whole infinite-scroll set** by paging the underlying
 feed (no manual scrolling), de-duplicate, and throttle politely.
 
-### On your own home feed (Instagram)
+### On a post / reel / story / highlight (Instagram)
 
-On the home route a **⬇ Download feed** button grabs up to your configured cap
-(default **200**) of items from your own timeline. The feed is effectively
-infinite, so the cap (and a hard-stop on any checkpoint) is mandatory.
+The on-page download UI is reserved for **another member's content**:
+
+- on a **post or reel permalink** (`/p/…`, `/reel/…`), a floating
+  **⬇ Download this post** button;
+- in a **story or highlight viewer** (`/stories/…`), a floating **⬇ Download
+  story** / **⬇ Download highlight** button _(authorisation-gated)_.
+
+### Your own home feed (Instagram) — from the menu
+
+The home-feed grab is **not** an on-page button (it would clutter your own feed
+and sit over Instagram's Messages widget). Instead, run **⬇ Download my home
+feed now (≤cap)** from the userscript-manager menu — it grabs up to your
+configured cap (default **200**); the feed is effectively infinite, so the cap
+(and a hard-stop on any checkpoint) is mandatory. Toggle it with **Own feed /
+FYP bulk download**.
 
 ### Quality & format
 
@@ -79,25 +91,25 @@ fetching and saving are decoupled so a slow save dialog never stalls the queue.
 
 Every feature is an **independent toggle**, persisted via GM storage:
 
-| Setting                                 | Default        | What it does                                                       |
-| --------------------------------------- | -------------- | ------------------------------------------------------------------ |
-| Profile Download dropdown               | on             | The **⬇ Download ▾** control on a profile.                         |
-| Per-item overlay icon                   | on             | Floating **⬇ Download this post** button on a post/reel permalink. |
-| Timeline Photos / Videos                | on             | Include images / videos in profile bulk runs.                      |
-| Stories / Reels / Highlights            | on             | Each download type, independently.                                 |
-| Own feed / FYP bulk download            | on             | The home-feed grab.                                                |
-| Feed / FYP item cap                     | 200            | Hard cap on the infinite feed.                                     |
-| Authorisation gate (Stories/Highlights) | on             | One-time "I'm authorised" confirmation.                            |
-| ZIP bundling                            | off            | Bundle into size-capped ZIPs vs. individual files.                 |
-| Max ZIP size                            | 1024 MiB       | Target cap per ZIP.                                                |
-| Compression                             | STORE          | `STORE` (no recompress) or `DEFLATE`.                              |
-| Save via GM_download                    | off            | Manager saves with no per-file dialog.                             |
-| Pre-flight confirmation                 | on             | Confirm count before a bulk job starts.                            |
-| webp fallback                           | png            | `png` / `jpg` / `keep` (native JPEG is always tried first).        |
-| Delay between pages / jitter            | 2500 / 1500 ms | Polite pacing between enumeration requests.                        |
-| CDN download concurrency                | 3              | Parallel byte downloads (not GraphQL-throttled).                   |
-| Enumeration window cap (/11 min)        | 18             | Max enumeration requests per rolling 11 minutes.                   |
-| Reset MetaIncDL settings to defaults    | —              | Restore all settings.                                              |
+| Setting                                 | Default        | What it does                                                                         |
+| --------------------------------------- | -------------- | ------------------------------------------------------------------------------------ |
+| Profile Download dropdown               | on             | The **⬇ Download ▾** control on a profile.                                           |
+| Per-item overlay icon                   | on             | Floating **⬇ Download** button on a post/reel permalink or a story/highlight viewer. |
+| Timeline Photos / Videos                | on             | Include images / videos in profile bulk runs.                                        |
+| Stories / Reels / Highlights            | on             | Each download type, independently.                                                   |
+| Own feed / FYP bulk download            | on             | The home-feed grab.                                                                  |
+| Feed / FYP item cap                     | 200            | Hard cap on the infinite feed.                                                       |
+| Authorisation gate (Stories/Highlights) | on             | One-time "I'm authorised" confirmation.                                              |
+| ZIP bundling                            | off            | Bundle into size-capped ZIPs vs. individual files.                                   |
+| Max ZIP size                            | 1024 MiB       | Target cap per ZIP.                                                                  |
+| Compression                             | STORE          | `STORE` (no recompress) or `DEFLATE`.                                                |
+| Save via GM_download                    | off            | Manager saves with no per-file dialog.                                               |
+| Pre-flight confirmation                 | on             | Confirm count before a bulk job starts.                                              |
+| webp fallback                           | png            | `png` / `jpg` / `keep` (native JPEG is always tried first).                          |
+| Delay between pages / jitter            | 2500 / 1500 ms | Polite pacing between enumeration requests.                                          |
+| CDN download concurrency                | 3              | Parallel byte downloads (not GraphQL-throttled).                                     |
+| Enumeration window cap (/11 min)        | 18             | Max enumeration requests per rolling 11 minutes.                                     |
+| Reset MetaIncDL settings to defaults    | —              | Restore all settings.                                                                |
 
 ## How it works (for maintainers)
 

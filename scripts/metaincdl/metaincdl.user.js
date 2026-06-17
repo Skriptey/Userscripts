@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MetaIncDL — Instagram / Facebook / Threads downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.0.0
+// @version      1.0.1
 // @description  Download your own / authorised photos, videos, stories, reels & highlights from Instagram, Facebook and Threads in original quality (never webp), optionally zipped.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -866,12 +866,18 @@
       }
     },
 
+    /** Fetch one reel's media items (works for a user's live story-reel via the
+     *  numeric user id, OR a highlight via its "highlight:<id>" reel id). */
+    async reelMedia(reelId, label) {
+      const data = await apiGet(`/api/v1/feed/reels_media/?reel_ids=${encodeURIComponent(reelId)}`);
+      const reel = data && data.reels && data.reels[reelId];
+      const items = (reel && reel.items) || [];
+      return items.flatMap((n) => toItems(n, baseNameFor(n, label)));
+    },
+
     /** Stories currently live for a user. */
     async stories(userId, owner) {
-      const data = await apiGet(`/api/v1/feed/reels_media/?reel_ids=${encodeURIComponent(userId)}`);
-      const reel = data && data.reels && data.reels[userId];
-      const items = (reel && reel.items) || [];
-      return items.flatMap((n) => toItems(n, baseNameFor(n, owner + ' - story')));
+      return this.reelMedia(userId, owner + ' - story');
     },
 
     /** Highlight trays → each highlight's media. */
@@ -1666,16 +1672,56 @@
     (document.body || document.documentElement).appendChild(host);
   }
 
-  /** Mount a floating "feed grab" control on the home route. */
-  function mountFeedControl() {
-    if (!settings.fypBulk || !adapter || PLATFORM !== 'instagram') return;
-    if (profileHandle()) return; // only on home
-    if (location.pathname !== '/') return;
-    if (document.getElementById('midl-feed-ctl')) return;
+  /** A story/highlight VIEWER route → { kind:'story', user } | { kind:'highlight', id }
+   *  | null. IG: /stories/<username>/<id> and /stories/highlights/<id>. */
+  function storyRoute() {
+    if (PLATFORM !== 'instagram') return null;
+    const seg = location.pathname.split('/').filter(Boolean);
+    if (seg[0] !== 'stories') return null;
+    if (seg[1] === 'highlights' && seg[2]) return { kind: 'highlight', id: seg[2] };
+    if (seg[1] && seg[1] !== 'highlights') return { kind: 'story', user: seg[1] };
+    return null;
+  }
+
+  /** Download the story / highlight currently being viewed (authorisation-gated). */
+  async function downloadStoryRoute(route) {
+    if (!adapter || PLATFORM !== 'instagram') return;
+    if (!authorised(route.kind === 'highlight' ? 'highlights' : 'stories')) return;
+    if (!captureReady()) {
+      notify('MetaIncDL', 'Scroll/interact once so MetaIncDL can read the session, then retry.');
+      return;
+    }
+    try {
+      let items;
+      let label;
+      if (route.kind === 'highlight') {
+        items = await collect(await adapter.reelMedia('highlight:' + route.id, 'highlight'), {});
+        label = 'highlight';
+      } else {
+        const { id, owner } = await adapter.resolveUser(route.user);
+        items = await collect(await adapter.stories(id, owner), {});
+        label = owner + ' - stories';
+      }
+      await runJob(items, label);
+    } catch (err) {
+      notify('MetaIncDL', `Error: ${err.message}`);
+    }
+  }
+
+  /** Mount a floating download button on a story / highlight viewer. */
+  function mountStoryControl() {
+    if (!settings.overlayIcon || !adapter) return;
+    const route = storyRoute();
+    if (!route) return;
+    if (document.getElementById('midl-story-ctl')) return;
     const host = el('div', 'midl-float');
-    host.id = 'midl-feed-ctl';
-    const btn = el('button', 'midl-dd-btn', `⬇ Download feed (≤${settings.fypCap})`);
-    btn.addEventListener('click', downloadFyp);
+    host.id = 'midl-story-ctl';
+    const btn = el(
+      'button',
+      'midl-dd-btn',
+      route.kind === 'highlight' ? '⬇ Download highlight' : '⬇ Download story',
+    );
+    btn.addEventListener('click', () => downloadStoryRoute(route));
     host.appendChild(btn);
     (document.body || document.documentElement).appendChild(host);
   }
@@ -1732,18 +1778,21 @@
     (document.body || document.documentElement).appendChild(host);
   }
 
-  /** SPA route change handler — Meta apps navigate client-side. */
+  /** SPA route change handler — Meta apps navigate client-side. The download UI
+   *  appears only on ANOTHER member's surface (a profile, a post/reel permalink,
+   *  or a story/highlight viewer) — never on the user's own home feed (the FYP
+   *  grab moved to the manager menu). */
   function onRouteChange() {
     // Remove stale controls; re-mount for the new route.
     const old = document.getElementById('midl-profile-ctl');
     if (old && !profileHandle()) old.remove();
-    const oldFeed = document.getElementById('midl-feed-ctl');
-    if (oldFeed && location.pathname !== '/') oldFeed.remove();
     const oldPost = document.getElementById('midl-post-ctl');
     if (oldPost && !postPermalink()) oldPost.remove();
+    const oldStory = document.getElementById('midl-story-ctl');
+    if (oldStory && !storyRoute()) oldStory.remove();
     mountProfileControl();
-    mountFeedControl();
     mountPostOverlay();
+    mountStoryControl();
   }
 
   /** Hook history.pushState/replaceState + popstate to detect SPA navigation. */
@@ -1814,6 +1863,11 @@
     toggle('Reels', 'dlReels');
     toggle('Highlights', 'dlHighlights');
     toggle('Own feed / FYP bulk download', 'fypBulk');
+    // The own-feed grab is a MENU action now (no longer an on-page button on the
+    // home feed) — the on-page download UI is reserved for other members' content.
+    if (settings.fypBulk && PLATFORM === 'instagram') {
+      add(`⬇ Download my home feed now (≤${settings.fypCap})`, downloadFyp);
+    }
     num('Feed / FYP item cap', 'fypCap', '');
     toggle('Authorisation gate (Stories/Highlights)', 'requireAuthConfirm');
     toggle('ZIP bundling', 'zip');
@@ -1850,13 +1904,14 @@
   /** Inject the panel/control styles. */
   function injectStyles() {
     const css = `
-      .midl-float{position:fixed;z-index:2147483600;bottom:20px;right:20px;font-family:system-ui,Arial,sans-serif}
+      /* Sit ABOVE Instagram's bottom-right Messages widget (which is ~56px tall). */
+      .midl-float{position:fixed;z-index:2147483600;bottom:92px;right:20px;font-family:system-ui,Arial,sans-serif}
       .midl-dd{position:relative}
       .midl-dd-btn,.midl-cancel{background:#0a84ff;color:#fff;border:0;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3)}
       .midl-dd-menu{display:none;position:absolute;bottom:46px;right:0;background:#1c1c1e;border:1px solid #3a3a3c;border-radius:8px;overflow:hidden;min-width:180px;box-shadow:0 6px 20px rgba(0,0,0,.4)}
       .midl-dd-item{display:block;width:100%;text-align:left;background:none;border:0;color:#fff;padding:10px 14px;font-size:13px;cursor:pointer}
       .midl-dd-item:hover{background:#0a84ff}
-      .midl-panel{position:fixed;z-index:2147483601;bottom:20px;right:20px;width:340px;background:#1c1c1e;color:#fff;border:1px solid #3a3a3c;border-radius:12px;padding:14px;font-family:system-ui,Arial,sans-serif;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+      .midl-panel{position:fixed;z-index:2147483601;bottom:92px;right:20px;width:340px;background:#1c1c1e;color:#fff;border:1px solid #3a3a3c;border-radius:12px;padding:14px;font-family:system-ui,Arial,sans-serif;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
       .midl-title{font-weight:700;margin-bottom:8px}
       .midl-current{opacity:.85;margin-bottom:6px;word-break:break-all;min-height:1.2em}
       .midl-barwrap{height:6px;background:#3a3a3c;border-radius:3px;overflow:hidden;margin-bottom:6px}

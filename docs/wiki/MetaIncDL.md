@@ -43,9 +43,13 @@ the tab) once so it can capture the query, then retry.
 | **Download All**    | everything above                               |
 
 Bulk runs auto-load the **whole infinite-scroll set** (paging the feed cursor —
-no manual scrolling), de-duplicate, and throttle politely. On your own **home
-feed** (Instagram) a **⬇ Download feed** button grabs up to your cap (default
-**200**).
+no manual scrolling), de-duplicate, and throttle politely.
+
+The on-page download UI is reserved for **another member's content**: a floating
+**⬇ Download this post** on a post/reel permalink, and a **⬇ Download story /
+highlight** button in a story/highlight viewer (`/stories/…`). Your own
+**home-feed** grab (Instagram) is a **menu** action — **⬇ Download my home feed
+now (≤cap)** (default **200**) — not an on-page button on your own feed.
 
 ## Quality & format
 
