@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.4
+// @version       1.7.5
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -20,7 +20,6 @@
 // @grant         GM_setValue
 // @grant         GM_notification
 // @grant         GM_info
-// @require       https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 // @connect       amp-api.music.apple.com
 // @connect       mzstatic.com
 // @connect       itunes.apple.com
@@ -152,8 +151,6 @@
 
 (function () {
   'use strict';
-
-  /* global JSZip */ // provided by the pinned @require (cdnjs jszip 3.10.1)
 
   // Belt-and-braces guard: the manager's @exclude-match plus an explicit check
   // for Apple Music's commerce iframe so we don't run twice. The pathname test is
@@ -542,6 +539,103 @@
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
 
+  // CRC-32 (IEEE) — precomputed table for the ZIP writer below.
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(bytes) {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  /** Build a ZIP (STORE — no compression) from [{name, text}|{name, bytes}]
+   *  SYNCHRONOUSLY → Blob. We hand-roll this instead of JSZip because JSZip's
+   *  generateAsync HANGS under Apple Music's environment (it never resolves, which
+   *  made a lyrics download "zip … then time out → dozens of individual files" that
+   *  the browser then throttles). A sync writer can't hang, needs no dependency, and
+   *  STORE is ideal here (text/already-compressed media don't benefit from DEFLATE). */
+  function buildStoreZip(files) {
+    const enc = new TextEncoder();
+    const chunks = []; // body: local headers + data, in order
+    const central = []; // central-directory records, filled as we go
+    let offset = 0;
+    const u16 = (n) => [n & 0xff, (n >> 8) & 0xff];
+    const u32 = (n) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff];
+    for (const f of files) {
+      const nameBytes = enc.encode(f.name);
+      const data = f.bytes || enc.encode(f.text || '');
+      const crc = crc32(data);
+      const size = data.length;
+      // Local file header (sig, ver 2.0, flags 0, STORE, time 0, date 1980-01-01).
+      const lfh = [
+        ...u32(0x04034b50),
+        ...u16(20),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0x21),
+        ...u32(crc),
+        ...u32(size),
+        ...u32(size),
+        ...u16(nameBytes.length),
+        ...u16(0),
+      ];
+      chunks.push(new Uint8Array(lfh), nameBytes, data);
+      central.push({ nameBytes, crc, size, offset });
+      offset += lfh.length + nameBytes.length + size;
+    }
+    const cdStart = offset;
+    let cdSize = 0;
+    for (const e of central) {
+      const cdh = [
+        ...u32(0x02014b50),
+        ...u16(20),
+        ...u16(20),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0x21),
+        ...u32(e.crc),
+        ...u32(e.size),
+        ...u32(e.size),
+        ...u16(e.nameBytes.length),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0),
+        ...u16(0),
+        ...u32(0),
+        ...u32(e.offset),
+      ];
+      chunks.push(new Uint8Array(cdh), e.nameBytes);
+      cdSize += cdh.length + e.nameBytes.length;
+    }
+    chunks.push(
+      new Uint8Array([
+        ...u32(0x06054b50),
+        ...u16(0),
+        ...u16(0),
+        ...u16(central.length),
+        ...u16(central.length),
+        ...u32(cdSize),
+        ...u32(cdStart),
+        ...u16(0),
+      ]),
+    );
+    return new Blob(chunks, { type: 'application/zip' });
+  }
+
+  /** Read a Blob's bytes (for feeding binary files into buildStoreZip). */
+  async function blobToBytes(blob) {
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+
   /** Fetch a binary resource cross-origin (GM_xmlhttpRequest) as a Blob. */
   function fetchBlob(url) {
     return new Promise((resolve, reject) => {
@@ -723,12 +817,19 @@
     if (settings.motionRes === 'L') {
       toast('Building cover-art ZIP…');
       try {
-        const zip = new JSZip();
-        if (src.static) zip.file(`${coverSuffix('static')}.jpg`, await fetchBlob(src.static));
+        const files = [];
+        if (src.static)
+          files.push({
+            name: `${coverSuffix('static')}.jpg`,
+            bytes: await blobToBytes(await fetchBlob(src.static)),
+          });
         for (const [kind, url] of motions) {
-          zip.file(`${coverSuffix(kind)}.mp4`, await downloadMotionBlob(url, 'L'));
+          files.push({
+            name: `${coverSuffix(kind)}.mp4`,
+            bytes: await blobToBytes(await downloadMotionBlob(url, 'L')),
+          });
         }
-        downloadBlob(await zip.generateAsync({ type: 'blob' }), `${artist} - ${name}_CoverArt.zip`);
+        downloadBlob(buildStoreZip(files), `${artist} - ${name}_CoverArt.zip`);
         toast('Cover-art ZIP saved ✓');
       } catch (err) {
         toast(`ZIP failed: ${err.message}`);
@@ -1252,29 +1353,22 @@
         saveFile(files[0]);
         return toast(`Lyrics saved ✓${note}`);
       }
-      const zip = new JSZip();
-      for (const f of files) zip.file(f.name, f.text);
       const tag = tierLabel.replace(/[^a-z]/gi, '');
-      // The ZIP build is the ONLY async step after the (now-working) fetches, so a
-      // stall here is what made the lyrics "fetch everything, then nothing happens":
-      // an unbounded await with no error. NEVER lose the lyrics — race the build
-      // against a watchdog and fall back to saving each file individually.
+      // Build the ZIP SYNCHRONOUSLY (buildStoreZip). JSZip's generateAsync hangs
+      // under Apple Music's environment — that stall is what made an album download
+      // fall back to dozens of individual file prompts (which the browser then
+      // throttles after the first few). A sync STORE writer can't hang.
       console.log(`[ITAM] lyrics: zipping ${files.length} file(s)…`);
-      const saveIndividually = (why) => {
-        console.warn(
-          `[ITAM] lyrics: ZIP build ${why}; saving ${files.length} file(s) individually instead`,
-        );
-        for (const f of files) saveFile(f);
-        toast(`Lyrics saved as ${files.length} files${note}`);
-      };
       let blob;
       try {
-        blob = await Promise.race([
-          zip.generateAsync({ type: 'blob' }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), 20000)),
-        ]);
+        blob = buildStoreZip(files);
       } catch (zipErr) {
-        return saveIndividually(zipErr.message);
+        // Last resort only (the sync builder shouldn't throw): individual files.
+        console.warn(
+          `[ITAM] lyrics: ZIP build failed (${zipErr.message}); saving ${files.length} file(s) individually`,
+        );
+        for (const f of files) saveFile(f);
+        return toast(`Lyrics saved as ${files.length} files${note}`);
       }
       console.log(`[ITAM] lyrics: zip ready (${blob.size} bytes), saving`);
       downloadBlob(blob, `${safeName(model.artist)} - ${safeName(model.name)}_Lyrics_${tag}.zip`);

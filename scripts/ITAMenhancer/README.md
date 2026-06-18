@@ -205,9 +205,11 @@ reused):
   token. The app bundle is fetched same-origin; the Harmony button opens a URL (no
   fetch). **Apple Music Classical** (`classical.music.apple.com`) reads the **same**
   catalog API from the same hosts — adding that `@match` introduces no new endpoint.
-- **`@require`:** [JSZip 3.10.1](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js)
-  from cdnjs (pinned, immutable versioned URL) — used to bundle the "All" cover-art
-  ZIP and the album lyrics ZIP. No remote code is fetched at runtime.
+- **No `@require` / zero runtime dependencies.** The cover-art "All" ZIP and the
+  album lyrics ZIP are built by a tiny **built-in STORE-only ZIP writer**
+  (`buildStoreZip`) — there is no JSZip (or any other) third-party library. This
+  also fixed an Apple-Music-specific stall where JSZip's async build never
+  resolved, forcing dozens of individual file downloads.
 - **No data exfiltration / no unsafe DOM:** the captured tokens are sent only to
   Apple's own API; all UI is built with `textContent` (no `innerHTML`). The
   catalog credential is cached locally (GM storage); the user token is read per
