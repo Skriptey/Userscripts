@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.6
+// @version       1.7.7
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -1172,28 +1172,18 @@
     return parsed.lines.map((ln) => ln.text).join('\n');
   }
 
-  // Structural TTML containers — safe to put on their own indented lines because
-  // the whitespace BETWEEN their children is insignificant. Everything else
-  // (notably <p> lyric lines and their word <span>s) is reproduced verbatim.
-  const TTML_BLOCK = new Set([
-    'tt',
-    'head',
-    'body',
-    'div',
-    'styling',
-    'layout',
-    'metadata',
-    'region',
-  ]);
-
   /** Re-indent Apple's minified lyrics TTML for readability WITHOUT changing any
-   *  content. Structural containers are placed on their own indented lines, but
-   *  every <p> (a lyric line) — its word <span>s and the EXACT spaces between them —
-   *  is reproduced byte-for-byte, so word boundaries and per-word timing are never
-   *  altered. Operates purely on the string (no DOM round-trip, so no namespaces
-   *  get rewritten). Falls back to the original input on any error or if the
-   *  reformat wouldn't be content-identical (verified by collapsing inter-tag
-   *  whitespace). */
+   *  content. Each PURELY-STRUCTURAL element (children are only other elements +
+   *  insignificant whitespace — tt/head/body/div/metadata/styling/… at ANY depth,
+   *  detected generically, not by a fixed list) goes on its own indented line. Any
+   *  element that holds text — every <p> lyric line with its word <span>s and the
+   *  EXACT spaces between them, plus metadata text like <ttm:title> — is reproduced
+   *  byte-for-byte. Word/syllable <span>s are adjacent WITHOUT a separating space,
+   *  so they must stay on one line: indenting them would inject whitespace and split
+   *  words ("Together" → "To geth er"). Operates purely on the string (no DOM
+   *  round-trip, so namespaces aren't rewritten). Falls back to the original input
+   *  on any error, or if the reformat wouldn't be content-identical (verified by
+   *  collapsing inter-tag whitespace). */
   function prettyTtml(ttml) {
     try {
       const src = String(ttml);
@@ -1260,6 +1250,42 @@
           i = j;
         }
       }
+      // Classify an open tag → { inline, end } where `end` is the index of its
+      // matching close token. INLINE (emitted verbatim on one line) = a <p>/<span>,
+      // OR an element with direct (non-nested) non-whitespace text, OR one with no
+      // child element. Everything else is a pure-structural BLOCK whose children are
+      // re-indented.
+      const classifyOpen = (start) => {
+        const nm = toks[start].name;
+        if (nm === 'p' || nm === 'span') {
+          let d = 1;
+          for (let k = start + 1; k < toks.length; k++) {
+            const t = toks[k];
+            if (t.t === 'open' && t.name === nm) d++;
+            else if (t.t === 'close' && t.name === nm && --d === 0) return { inline: true, end: k };
+          }
+          return { inline: true, end: toks.length - 1 };
+        }
+        let depth = 1;
+        let hasText = false;
+        let hasEl = false;
+        let end = -1;
+        for (let k = start + 1; k < toks.length; k++) {
+          const t = toks[k];
+          if (t.t === 'text') {
+            if (depth === 1 && t.s.trim()) hasText = true;
+          } else if (t.t === 'open') {
+            if (depth === 1) hasEl = true;
+            depth++;
+          } else if (t.t === 'self') {
+            if (depth === 1) hasEl = true;
+          } else if (t.t === 'close' && --depth === 0) {
+            end = k;
+            break;
+          }
+        }
+        return { inline: hasText || !hasEl, end: end < 0 ? toks.length - 1 : end };
+      };
       const lines = [];
       let depth = 0;
       const pad = () => '  '.repeat(Math.max(0, depth));
@@ -1278,25 +1304,18 @@
           lines.push(pad() + tk.s);
           continue;
         }
-        // open
-        if (TTML_BLOCK.has((tk.name || '').toLowerCase())) {
+        // open — pure-structural elements indent their children; text-bearing ones
+        // (notably <p> lyric lines) are reproduced verbatim on a single line.
+        const cls = classifyOpen(k);
+        if (!cls.inline) {
           lines.push(pad() + tk.s);
           depth++;
           continue;
         }
-        // Inline (content) element — reproduce it and everything within verbatim,
-        // up to its matching close, on a single line.
-        let buf = tk.s;
-        let nest = 1;
-        let m = k + 1;
-        for (; m < toks.length && nest > 0; m++) {
-          const tm = toks[m];
-          buf += tm.s;
-          if (tm.t === 'open' && tm.name === tk.name) nest++;
-          else if (tm.t === 'close' && tm.name === tk.name) nest--;
-        }
+        let buf = '';
+        for (let m = k; m <= cls.end; m++) buf += toks[m].s;
         lines.push(pad() + buf);
-        k = m - 1;
+        k = cls.end;
       }
       const pretty = lines.join('\n') + '\n';
       // Integrity net: pretty and raw must be identical once inter-tag whitespace
