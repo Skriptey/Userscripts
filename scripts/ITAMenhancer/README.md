@@ -78,9 +78,13 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   back, and the console logs a per-tier tally (`word=… line=… static=…`).
   **Word-by-Word also saves Apple’s raw `.ttml` source** next to each `.lrc` — the
   lossless word-by-word original, so a genuinely word-synced track is never reduced
-  to just an LRC. Multiple files (an album, or one word-synced song = `.lrc` +
-  `.ttml`) bundle into a ZIP with names `<disc> - <track> - <title>.<ext>`; a lone
-  file downloads directly. If the ZIP build ever stalls, each file is saved
+  to just an LRC. That `.ttml` is **pretty-printed (re-indented) for readability**
+  by default — only the structural scaffolding is re-indented; every `<p>` lyric
+  line is reproduced byte-for-byte (word spans and spacing untouched). Turn off
+  **Pretty-print lyrics .ttml** to save Apple’s exact minified bytes instead.
+  Multiple files (an album, or one word-synced song = `.lrc` + `.ttml`) bundle into
+  a ZIP with names `<disc> - <track> - <title>.<ext>`; a lone file downloads
+  directly. If the ZIP build ever stalls, each file is saved
   individually instead so the lyrics are never lost. Tracks with no lyrics are
   skipped, a single bad track can’t abort the rest, and any failure is surfaced as a
   toast (never a silent no-op). The button is **hidden when nothing is
@@ -111,22 +115,23 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
 
 Open your userscript manager's menu (its toolbar icon, on an Apple Music page):
 
-| Setting                        | Default            | Notes                                                                                                                           |
-| ------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| Show audio formats             | `on`               | Master toggle for the format badges (inline + in the panel).                                                                    |
-| Show barcodes (UPC) & ISRCs    | `on`               | Master toggle for the barcode + per-track ISRC section (and the header button).                                                 |
-| Per-track formats column       | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Formats** column for tracks that differ from the album-level set.            |
-| Classical Work column          | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Work** column for classical releases (shown only when a track names a work). |
-| Inline format badges           | `on`               | Sub-option of _Show audio formats_: also inject badges near the album title.                                                    |
-| Integrate Harmony lookup       | `on`               | The **Harmony ↗** header/panel button (album cross-service lookup).                                                             |
-| Download cover art button      | `on`               | The **Download cover art** header/panel control (static + animated dropdown).                                                   |
-| Download Lyrics button         | `on`               | The **Download Lyrics** header/panel control (Word-by-Word / Line-by-Line / Static). Shown only when logged in + lyrics exist.  |
-| Find ISWCs button              | `on`               | The **Find ISWCs** header/panel control — per-track ISWC lookup + MusicBrainz seeding (runs on click).                          |
-| ISWC source · MusicBrainz      | `on`               | Sub-option of _Find ISWCs_: query MusicBrainz works (primary; supplies the work MBID for seeding).                              |
-| ISWC source · credits.fm       | `on`               | Sub-option of _Find ISWCs_: query credits.fm as a gap-fill when MusicBrainz has no ISWC.                                        |
-| Animated cover-art resolution  | `L`                | Prompts for **L** (1080), **XL** (2160), or **Max** (highest). XL/Max are very large.                                           |
-| Locale override                | storefront default | Apple Music locale (e.g. `en-US`, `ja-JP`) for the API.                                                                         |
-| Clear cached Apple Music token | —                  | Forget the cached catalog credential (re-captured on next use).                                                                 |
+| Setting                        | Default            | Notes                                                                                                                            |
+| ------------------------------ | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Show audio formats             | `on`               | Master toggle for the format badges (inline + in the panel).                                                                     |
+| Show barcodes (UPC) & ISRCs    | `on`               | Master toggle for the barcode + per-track ISRC section (and the header button).                                                  |
+| Per-track formats column       | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Formats** column for tracks that differ from the album-level set.             |
+| Classical Work column          | `on`               | Sub-option of _Show barcodes & ISRCs_: per-track **Work** column for classical releases (shown only when a track names a work).  |
+| Inline format badges           | `on`               | Sub-option of _Show audio formats_: also inject badges near the album title.                                                     |
+| Integrate Harmony lookup       | `on`               | The **Harmony ↗** header/panel button (album cross-service lookup).                                                              |
+| Download cover art button      | `on`               | The **Download cover art** header/panel control (static + animated dropdown).                                                    |
+| Download Lyrics button         | `on`               | The **Download Lyrics** header/panel control (Word-by-Word / Line-by-Line / Static). Shown only when logged in + lyrics exist.   |
+| Pretty-print lyrics .ttml      | `on`               | Sub-option of _Download Lyrics_: re-indent the saved Word-by-Word `.ttml` source for readability (content unchanged; off = raw). |
+| Find ISWCs button              | `on`               | The **Find ISWCs** header/panel control — per-track ISWC lookup + MusicBrainz seeding (runs on click).                           |
+| ISWC source · MusicBrainz      | `on`               | Sub-option of _Find ISWCs_: query MusicBrainz works (primary; supplies the work MBID for seeding).                               |
+| ISWC source · credits.fm       | `on`               | Sub-option of _Find ISWCs_: query credits.fm as a gap-fill when MusicBrainz has no ISWC.                                         |
+| Animated cover-art resolution  | `L`                | Prompts for **L** (1080), **XL** (2160), or **Max** (highest). XL/Max are very large.                                            |
+| Locale override                | storefront default | Apple Music locale (e.g. `en-US`, `ja-JP`) for the API.                                                                          |
+| Clear cached Apple Music token | —                  | Forget the cached catalog credential (re-captured on next use).                                                                  |
 
 Each feature set can be turned on/off independently from the userscript manager's
 menu; the panel and badges render only the enabled sets. In current Tampermonkey

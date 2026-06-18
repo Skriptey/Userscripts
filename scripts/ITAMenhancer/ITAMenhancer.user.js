@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.5
+// @version       1.7.6
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -207,6 +207,7 @@
     harmonyLookup: true, // FEATURE: "Harmony ↗" header/panel button (album cross-service lookup)
     coverArt: true, // FEATURE: "Download cover art" header/panel button (static + animated)
     downloadLyrics: true, // FEATURE: "Download Lyrics" header/panel button (word-by-word / line / static; logged-in only)
+    prettyTtml: true, // sub-option of downloadLyrics: pretty-print (re-indent) the saved word-by-word .ttml source for readability (content unchanged)
     iswcLookup: true, // FEATURE: "Find ISWCs" — per-track ISWC lookup + MusicBrainz seeding (on explicit click)
     iswcSourceMb: true, // sub-option of iswcLookup: query MusicBrainz works (primary; gives the MB work id for seeding)
     iswcSourceCreditsFm: true, // sub-option of iswcLookup: query credits.fm (gap-filler when MusicBrainz has no ISWC)
@@ -1171,6 +1172,147 @@
     return parsed.lines.map((ln) => ln.text).join('\n');
   }
 
+  // Structural TTML containers — safe to put on their own indented lines because
+  // the whitespace BETWEEN their children is insignificant. Everything else
+  // (notably <p> lyric lines and their word <span>s) is reproduced verbatim.
+  const TTML_BLOCK = new Set([
+    'tt',
+    'head',
+    'body',
+    'div',
+    'styling',
+    'layout',
+    'metadata',
+    'region',
+  ]);
+
+  /** Re-indent Apple's minified lyrics TTML for readability WITHOUT changing any
+   *  content. Structural containers are placed on their own indented lines, but
+   *  every <p> (a lyric line) — its word <span>s and the EXACT spaces between them —
+   *  is reproduced byte-for-byte, so word boundaries and per-word timing are never
+   *  altered. Operates purely on the string (no DOM round-trip, so no namespaces
+   *  get rewritten). Falls back to the original input on any error or if the
+   *  reformat wouldn't be content-identical (verified by collapsing inter-tag
+   *  whitespace). */
+  function prettyTtml(ttml) {
+    try {
+      const src = String(ttml);
+      // Tokenise into tags and text, honouring quoted attribute values.
+      const toks = [];
+      let i = 0;
+      const n = src.length;
+      while (i < n) {
+        if (src[i] === '<') {
+          let j;
+          if (src.startsWith('<!--', i)) {
+            j = src.indexOf('-->', i);
+            j = j < 0 ? n : j + 3;
+            toks.push({ t: 'raw', s: src.slice(i, j) });
+          } else if (src.startsWith('<?', i)) {
+            j = src.indexOf('?>', i);
+            j = j < 0 ? n : j + 2;
+            toks.push({ t: 'decl', s: src.slice(i, j) });
+          } else if (src.startsWith('<!', i)) {
+            j = src.indexOf('>', i);
+            j = j < 0 ? n : j + 1;
+            toks.push({ t: 'raw', s: src.slice(i, j) });
+          } else {
+            let q = null;
+            j = i + 1;
+            for (; j < n; j++) {
+              const c = src[j];
+              if (q) {
+                if (c === q) q = null;
+              } else if (c === '"' || c === "'") q = c;
+              else if (c === '>') {
+                j++;
+                break;
+              }
+            }
+            const s = src.slice(i, j);
+            let kind, name;
+            if (s[1] === '/') {
+              kind = 'close';
+              name = s
+                .slice(2, -1)
+                .trim()
+                .split(/[\s/>]/)[0];
+            } else if (s.endsWith('/>')) {
+              kind = 'self';
+              name = s
+                .slice(1, -2)
+                .trim()
+                .split(/[\s/>]/)[0];
+            } else {
+              kind = 'open';
+              name = s
+                .slice(1, -1)
+                .trim()
+                .split(/[\s/>]/)[0];
+            }
+            toks.push({ t: kind, s, name });
+          }
+          i = j;
+        } else {
+          let j = src.indexOf('<', i);
+          if (j < 0) j = n;
+          toks.push({ t: 'text', s: src.slice(i, j) });
+          i = j;
+        }
+      }
+      const lines = [];
+      let depth = 0;
+      const pad = () => '  '.repeat(Math.max(0, depth));
+      for (let k = 0; k < toks.length; k++) {
+        const tk = toks[k];
+        if (tk.t === 'text') {
+          if (tk.s.trim()) lines.push(pad() + tk.s.trim());
+          continue; // drop insignificant inter-tag whitespace
+        }
+        if (tk.t === 'decl' || tk.t === 'raw' || tk.t === 'self') {
+          lines.push(pad() + tk.s);
+          continue;
+        }
+        if (tk.t === 'close') {
+          depth = Math.max(0, depth - 1);
+          lines.push(pad() + tk.s);
+          continue;
+        }
+        // open
+        if (TTML_BLOCK.has((tk.name || '').toLowerCase())) {
+          lines.push(pad() + tk.s);
+          depth++;
+          continue;
+        }
+        // Inline (content) element — reproduce it and everything within verbatim,
+        // up to its matching close, on a single line.
+        let buf = tk.s;
+        let nest = 1;
+        let m = k + 1;
+        for (; m < toks.length && nest > 0; m++) {
+          const tm = toks[m];
+          buf += tm.s;
+          if (tm.t === 'open' && tm.name === tk.name) nest++;
+          else if (tm.t === 'close' && tm.name === tk.name) nest--;
+        }
+        lines.push(pad() + buf);
+        k = m - 1;
+      }
+      const pretty = lines.join('\n') + '\n';
+      // Integrity net: pretty and raw must be identical once inter-tag whitespace
+      // is normalised away — otherwise we changed content, so keep the raw input.
+      const norm = (s) => s.replace(/>\s+</g, '><').trim();
+      if (norm(pretty) !== norm(src)) {
+        console.warn('[ITAM] TTML pretty-print would change content; keeping raw');
+        return ttml;
+      }
+      return pretty;
+    } catch (err) {
+      console.warn('[ITAM] TTML pretty-print failed; keeping raw:', err.message);
+      return ttml;
+    }
+  }
+
   /** GET a song's lyrics TTML for one kind ('syllable-lyrics' | 'lyrics'); null when
    *  unavailable (logged out, or the song lacks that lyric type → amp-api 404). */
   async function fetchLyricsTtml(country, songId, kind, devToken, userToken) {
@@ -1341,7 +1483,11 @@
       for (const r of out) {
         const stem = lyricsFileStem(r.t);
         files.push({ name: `${stem}.${r.ext}`, text: r.text });
-        if (tier === 'word' && r.ttml) files.push({ name: `${stem}.ttml`, text: r.ttml });
+        if (tier === 'word' && r.ttml)
+          files.push({
+            name: `${stem}.ttml`,
+            text: settings.prettyTtml ? prettyTtml(r.ttml) : r.ttml,
+          });
       }
 
       const saveFile = (f) =>
@@ -2302,6 +2448,9 @@
         'downloadLyrics',
         `Download Lyrics button: ${on(settings.downloadLyrics)}`,
         () => toggleSetting('downloadLyrics', 'Download Lyrics button'),
+      ),
+      addMenuCommand('prettyTtml', `Pretty-print lyrics .ttml: ${on(settings.prettyTtml)}`, () =>
+        toggleSetting('prettyTtml', 'Pretty-print lyrics TTML', 'Download Lyrics button'),
       ),
       addMenuCommand('iswcLookup', `Find ISWCs button: ${on(settings.iswcLookup)}`, () =>
         toggleSetting('iswcLookup', 'Find ISWCs button'),

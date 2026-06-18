@@ -56,7 +56,8 @@ covered automatically (Apple redirects them to Apple Music).
   Static; Line-by-Line → Static), so a release where only some tracks are word-synced
   still downloads complete (the console logs a per-tier tally). **Word-by-Word also
   saves Apple’s raw `.ttml` source** beside each `.lrc` — the lossless word-by-word
-  original. Multiple files (an album, or one word-synced song = `.lrc` + `.ttml`) are
+  original, **pretty-printed (re-indented) for readability** by default (every `<p>`
+  line stays byte-for-byte; toggle **Pretty-print lyrics .ttml** off for raw bytes). Multiple files (an album, or one word-synced song = `.lrc` + `.ttml`) are
   zipped (`<disc> - <track> - <title>.<ext>`); a lone file downloads directly, and if
   the zip ever stalls the files are saved individually instead. The button is
   **hidden when nothing is downloadable**. Lyrics are licensed content — **personal

@@ -141,11 +141,14 @@ toast (so a download can't silently do nothing).
 No. The Word-by-Word `.lrc` is an **enhanced “A2” LRC** that embeds a timestamp **per
 word** (`[mm:ss.xx]<mm:ss.xx>word <mm:ss.xx>word …`), so the word timing is preserved —
 not just line timing. As a belt-and-braces guard, Word-by-Word **also saves Apple's raw
-`.ttml` source** next to each `.lrc`: that's the exact, lossless word-synced original. A
-track only “drops” to line timing when Apple genuinely has no word data for it — and the
-console prints a per-track tally (`word=… line=… static=…`) so you can see exactly which
-got what. ITAM also reads Apple's `ttmlLocalizations` field (not just `ttml`), so
-word-timed lyrics stored there aren't missed.
+`.ttml` source** next to each `.lrc`: that's the exact, lossless word-synced original
+(**pretty-printed/re-indented for readability** by default — every `<p>` line is kept
+byte-for-byte so word timing is untouched; toggle **Pretty-print lyrics .ttml** off to
+save Apple's raw minified bytes). A track only “drops” to line timing when Apple
+genuinely has no word data for it — and the console prints a per-track tally
+(`word=… line=… static=…`) so you can see exactly which got what. ITAM also reads Apple's
+`ttmlLocalizations` field (not just `ttml`), so word-timed lyrics stored there aren't
+missed.
 
 **Q. Download Lyrics shows “Fetching…” then nothing happens — no file, no message.**
 It should always end in a toast now (“Lyrics saved ✓”, “No lyrics returned…”, or an
