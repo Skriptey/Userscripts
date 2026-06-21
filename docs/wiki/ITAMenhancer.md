@@ -17,7 +17,9 @@ covered automatically (Apple redirects them to Apple Music).
    [Violentmonkey](https://violentmonkey.github.io/), then install ITAM Enhancer.
 2. Open any Apple Music album. Format badges appear near the title, and a floating
    **ITAM ▾** button (bottom-right) opens the full details panel. No login or
-   setup required.
+   setup required. The button lifts above any banner Apple pins to the bottom of
+   the page (e.g. the “choose another country” locale prompt), and badge placement
+   keeps retrying so a slow- or awkwardly-rendered header still gets them.
 
 ## Features
 
@@ -70,8 +72,11 @@ covered automatically (Apple redirects them to Apple Music).
   is a toggle. Treat ISWCs as hints to verify.
 - Works on **album / song / music-video** pages on both **music.apple.com** and
   **classical.music.apple.com** (Apple Music Classical), every storefront, and
-  follows the single-page navigation. Legacy `itunes.apple.com` links aren't
-  matched directly — Apple redirects them to `music.apple.com` first.
+  follows the single-page navigation. It also works in **library views** (e.g.
+  `…/library/albums`) where an album opens in a side detail pane and the URL never
+  gains an id — ITAM reads the album the page itself loaded. Legacy
+  `itunes.apple.com` links aren't matched directly — Apple redirects them to
+  `music.apple.com` first.
 
 ## Settings
 

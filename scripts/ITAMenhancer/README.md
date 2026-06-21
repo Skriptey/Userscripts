@@ -44,7 +44,9 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   **Apple Digital Master (“Mastered for iTunes”) badge**, and a **track table with
   ISRCs and track lengths** (plus the cover-art and Harmony actions). The panel
   **grows with the window** on wide screens and **hides the Composer column** when
-  it gets too narrow; its footer shows the running ITAM Enhancer version.
+  it gets too narrow; its footer shows the running ITAM Enhancer version. The
+  floating button **lifts above any banner Apple pins to the bottom** of the page
+  (e.g. the “choose another country” locale prompt) so it never overlaps it.
 - **One-click copy** — copy the barcode, any single ISRC (click it), **all
   ISRCs**, or the whole record **as JSON**.
 - **MagicISRC** — one click opens the album in kepstin's MagicISRC, pre-filled
@@ -105,11 +107,14 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   Toggle with **Find ISWCs button**.
 - Works on **album**, **song**, and **music-video** pages on both
   **music.apple.com** and **classical.music.apple.com** (Apple Music Classical),
-  across all storefronts, and follows the in-app (single-page) navigation. The
-  floating launcher is always available as a fallback if Apple's layout shifts.
-  Legacy **`itunes.apple.com`** links are not matched directly — Apple
-  301-redirects them to `music.apple.com` before the page loads, so they're
-  already covered.
+  across all storefronts, and follows the in-app (single-page) navigation. It also
+  works in **library views** (e.g. `classical.music.apple.com/library/albums`),
+  where the selected album opens in a side detail pane and the URL stays
+  `…/library/albums` with no id: ITAM passively reads the album the **page itself**
+  loaded (its `/v1/catalog/{cc}/albums/{id}` request) and uses that. The floating
+  launcher is always available as a fallback if Apple's layout shifts. Legacy
+  **`itunes.apple.com`** links are not matched directly — Apple 301-redirects them
+  to `music.apple.com` before the page loads, so they're already covered.
 
 ## Settings
 
@@ -222,6 +227,12 @@ reused):
   to the user's machine. The only third-party request is the **MusicBrainz barcode
   lookup**, which runs **only on an explicit MagicISRC click** and sends just the
   public barcode (no tokens). Nothing else is sent to any third party.
+- **Passive entity capture (library views):** to identify the album on a
+  `…/library/albums` page (whose URL has no id), ITAM wraps the page's own
+  `fetch`/`XMLHttpRequest` to **read the URL** of the catalog request the page
+  already makes (`/v1/catalog/{cc}/albums/{id}`). It is **observation only** — every
+  wrapper calls straight through, no request is modified or added, and nothing
+  (URLs included) is sent anywhere; it just remembers the last entity's id locally.
 - **Lyrics:** **Download Lyrics** calls Apple's `syllable-lyrics`/`lyrics` endpoints,
   which require your **logged-in Music-User-Token** — it does nothing when you're
   logged out (the button is hidden). The TTML is fetched only from Apple's own API

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BunkrDL — Bunkr bulk downloader
 // @namespace    https://github.com/Skriptey/Userscripts
-// @version      1.7.0
+// @version      1.7.1
 // @description  Adds rate-limited bulk-download controls (by media type, bundled into size-capped ZIPs) to Bunkr albums, plus sorting, infinite scroll and hover previews on balbums.st / bunkr-albums.io listing pages.
 // @author       Skriptey
 // @license      GPL-3.0-or-later
@@ -645,11 +645,17 @@
         },
         onerror: () => {
           activeRequest = null;
-          reject(new Error('network error'));
+          // Mark transient: a CDN that resets the connection (rather than returning
+          // 429) still wants us to slow down, so the caller backs off escalatingly.
+          const e = new Error('network error');
+          e.transient = true;
+          reject(e);
         },
         ontimeout: () => {
           activeRequest = null;
-          reject(new Error('timeout'));
+          const e = new Error('timeout');
+          e.transient = true;
+          reject(e);
         },
         onabort: () => {
           activeRequest = null;
@@ -1183,24 +1189,36 @@
             return blob;
           } catch (err) {
             if (cancelRequested) return null;
-            if (err.rateLimited) {
-              backoff = Math.min(
-                settings.backoffMaxMs,
-                err.retryAfter || (backoff ? backoff * 2 : settings.backoffBaseMs),
-              );
-              ui.log(
-                `Rate limited on "${file.name}" — waiting ${Math.round(backoff / 1000)}s ` +
-                  `(try ${attempt}/${settings.maxRetries})`,
-              );
-              await sleep(backoff);
-            } else if (attempt < settings.maxRetries) {
-              ui.log(`Retry ${attempt}/${settings.maxRetries} for "${file.name}": ${err.message}`);
-              await sleep(settings.backoffBaseMs);
-            } else {
+            const last = attempt >= settings.maxRetries;
+            const failMsg = () =>
               ui.log(
                 `✗ Failed "${file.name}": ${err.message}` +
                   (lastHost ? ` — media host ${lastHost}; if blocked, add it to @connect` : ''),
               );
+            // Both explicit rate-limits (429/503) AND network errors/timeouts get
+            // ESCALATING backoff: a CDN that resets the connection on rapid requests
+            // (the "initial file works, the rest network-error" pattern) is rate-
+            // limiting us by another name, so a fixed short retry just keeps hitting
+            // a host that's already refusing. Doubling the wait lets it recover.
+            if (err.rateLimited || err.transient) {
+              backoff = Math.min(
+                settings.backoffMaxMs,
+                err.retryAfter || (backoff ? backoff * 2 : settings.backoffBaseMs),
+              );
+              if (last) {
+                failMsg();
+              } else {
+                ui.log(
+                  `${err.rateLimited ? 'Rate limited' : 'Network error'} on "${file.name}" — ` +
+                    `waiting ${Math.round(backoff / 1000)}s (try ${attempt}/${settings.maxRetries})`,
+                );
+                await sleep(backoff);
+              }
+            } else if (!last) {
+              ui.log(`Retry ${attempt}/${settings.maxRetries} for "${file.name}": ${err.message}`);
+              await sleep(settings.backoffBaseMs);
+            } else {
+              failMsg();
             }
           }
         }
@@ -2217,20 +2235,50 @@
       ui.setOverall(0, 1, 0, 0);
       // resolveFileUrl returns the API's `original` filename too — prefer the
       // caller's name, then that, then the URL basename.
-      const { url, name: resolvedName } = await resolveFileUrl(fileId, resolverHost);
-      let name = preferredName || resolvedName || '';
-      if (!name) {
-        // Derive a readable filename from the resolved URL (decoding +/%20/%xx).
+      // Retry with escalating backoff (mirrors the album job's fetchFile). A single
+      // CDN download hits the same connection-level rate-limiting as a bulk run —
+      // the "first file works, the next network-errors" pattern — so the old
+      // one-shot-no-retry failed far too easily on a second/third download.
+      let name = preferredName || '';
+      let blob = null;
+      let backoff = 0;
+      for (let attempt = 1; attempt <= settings.maxRetries; attempt++) {
         try {
-          name = decodeFileName(new URL(url).pathname.split('/').pop() || '');
-        } catch {
-          name = '';
+          const { url, name: resolvedName } = await resolveFileUrl(fileId, resolverHost);
+          if (!name) name = resolvedName || '';
+          if (!name) {
+            // Derive a readable filename from the resolved URL (decoding +/%20/%xx).
+            try {
+              name = decodeFileName(new URL(url).pathname.split('/').pop() || '');
+            } catch {
+              name = '';
+            }
+          }
+          ui.setTitle(name || `file ${fileId}`);
+          blob = await downloadBlob(url, (loaded, total) =>
+            ui.setCurrent(name || 'file', loaded, total),
+          );
+          break;
+        } catch (err) {
+          if (err && err.message === 'aborted') throw err; // user cancel → bubble out
+          if (attempt >= settings.maxRetries) throw err;
+          if (err.rateLimited || err.transient) {
+            backoff = Math.min(
+              settings.backoffMaxMs,
+              err.retryAfter || (backoff ? backoff * 2 : settings.backoffBaseMs),
+            );
+            ui.setTitle(
+              `${err.rateLimited ? 'Rate limited' : 'Network error'} — retrying in ` +
+                `${Math.round(backoff / 1000)}s (${attempt}/${settings.maxRetries})`,
+            );
+            await sleep(backoff);
+          } else {
+            ui.setTitle(`Retry ${attempt}/${settings.maxRetries}: ${err.message}`);
+            await sleep(settings.backoffBaseMs);
+          }
         }
       }
-      ui.setTitle(name || `file ${fileId}`);
-      const blob = await downloadBlob(url, (loaded, total) =>
-        ui.setCurrent(name || 'file', loaded, total),
-      );
+      if (!blob) throw new Error('download failed after retries');
       await saveBlob(blob, sanitizeFilename(name || `bunkr-${fileId}`));
       ui.setOverall(1, 1, blob.size, blob.size);
       ui.finish(`Saved ${name || 'file'} (${formatBytes(blob.size)}).`);

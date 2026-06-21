@@ -137,10 +137,16 @@ the next time you open the menu — no page reload needed.
 
 By default downloads run **one at a time** with a jittered delay between files,
 and back off exponentially when Bunkr returns **HTTP 429/503** (respecting
-`Retry-After`). This is deliberate — it avoids tripping Bunkr's rate limiting or
-getting your IP temporarily blocked. If you still hit limits, raise _Delay
-between files_. You can raise **Parallel downloads** for speed, but it increases
-the chance of being rate-limited.
+`Retry-After`). **Plain "network error" / timeout failures now back off the same
+way** — Bunkr's CDN often _resets the connection_ on rapid requests instead of
+returning a 429 (the "first file downloads, the next few network-error" pattern),
+so retrying immediately just hammers a host that's already refusing; BunkrDL now
+waits (5s, doubling) before each retry to let it recover. **Single-file downloads
+(per-card and single-file pages) now retry with the same backoff** instead of
+failing on the first hiccup. This is deliberate — it avoids tripping Bunkr's rate
+limiting or getting your IP temporarily blocked. If you still hit limits, raise
+_Delay between files_ or _Max retries per file_. You can raise **Parallel
+downloads** for speed, but it increases the chance of being rate-limited.
 
 See the **[FAQ](FAQ)** for common problems and the per-script
 [README](https://github.com/Skriptey/Userscripts/blob/main/scripts/BunkrDL/README.md)

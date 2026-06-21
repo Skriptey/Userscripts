@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.7
+// @version       1.7.9
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -1854,14 +1854,77 @@
   //  Section 5 — page detection
   // -------------------------------------------------------------------------
 
-  /** Parse the current Apple Music URL into { country, type, id } or null. */
+  // Entity capture — for views whose URL carries NO entity. On Apple Music *library*
+  // views (e.g. classical.music.apple.com/library/albums) the selected album opens
+  // in a detail pane while the URL stays /library/albums, so the URL alone can't
+  // identify it. We passively watch the page's OWN catalog requests (it fetches
+  // /v1/catalog/{cc}/{type}/{id} to render the album) and remember the latest, so
+  // parsePage() can fall back to it. Purely observational — every wrapper calls
+  // straight through; failures (e.g. a sandboxed unsafeWindow) just disable capture.
+  let capturedEntity = null;
+  const CATALOG_RE =
+    /\/\/amp-api\.music\.apple\.com\/v1\/catalog\/([a-z]{2})\/(albums|songs|music-videos)\/(\d+)/;
+  function noteCatalogUrl(url) {
+    try {
+      const m = typeof url === 'string' && CATALOG_RE.exec(url);
+      if (!m) return;
+      const ent = { country: m[1], type: m[2].replace(/s$/, ''), id: m[3] };
+      if (!capturedEntity || capturedEntity.id !== ent.id || capturedEntity.type !== ent.type) {
+        capturedEntity = ent;
+        console.debug(`[ITAM] captured ${ent.type} ${ent.id} (${ent.country}) from a page request`);
+        // A library detail view swaps the shown album WITHOUT changing the URL, so
+        // nudge the route handler to (re-)inject the header UI for the new entity.
+        queueMicrotask(onRoute);
+      }
+    } catch {
+      /* never let observation break the page */
+    }
+  }
+  function installEntityCapture() {
+    try {
+      const w = unsafeWindow;
+      const origFetch = w.fetch;
+      if (typeof origFetch === 'function' && !origFetch.__itam) {
+        const wrapped = function (input) {
+          try {
+            noteCatalogUrl(typeof input === 'string' ? input : input && input.url);
+          } catch {
+            /* ignore */
+          }
+          return origFetch.apply(this, arguments);
+        };
+        wrapped.__itam = true;
+        w.fetch = wrapped;
+      }
+      const proto = w.XMLHttpRequest && w.XMLHttpRequest.prototype;
+      if (proto && typeof proto.open === 'function' && !proto.open.__itam) {
+        const origOpen = proto.open;
+        const wrappedOpen = function (method, url) {
+          try {
+            noteCatalogUrl(url);
+          } catch {
+            /* ignore */
+          }
+          return origOpen.apply(this, arguments);
+        };
+        wrappedOpen.__itam = true;
+        proto.open = wrappedOpen;
+      }
+    } catch {
+      /* unsafeWindow unavailable / sandboxed — capture just won't run */
+    }
+  }
+
+  /** Parse the current Apple Music URL into { country, type, id }, falling back to
+   *  the last entity the PAGE itself fetched (for library views whose URL has no
+   *  id — see the capture above); null when neither yields a supported entity. */
   function parsePage() {
     const parts = location.pathname.split('/').filter(Boolean); // [cc, type, slug, id]
     const country = parts[0];
     const type = parts[1];
     const id = parts.reverse().find((p) => /^\d+$/.test(p)); // last numeric segment
-    if (!country || !type || !id || !SUPPORTED_TYPES.has(type)) return null;
-    return { country, type, id };
+    if (country && type && id && SUPPORTED_TYPES.has(type)) return { country, type, id };
+    return capturedEntity; // library/no-id view → whatever the page last loaded
   }
 
   // -------------------------------------------------------------------------
@@ -2557,6 +2620,38 @@
       }
     });
     document.body.appendChild(btn);
+    adjustLauncherForBanner();
+  }
+
+  /** Raise the floating launcher above any full-width bar Apple pins to the BOTTOM
+   *  of the viewport (e.g. the "Choose another country to see content specific to
+   *  your location" locale prompt), so the button doesn't overlap it. Best-effort
+   *  and cheap (a single hit-test); resets to the default 16px offset when no such
+   *  banner is present. The centred player controls and our own button are excluded
+   *  by sampling a bottom-LEFT point and requiring a near-full-width element. */
+  function adjustLauncherForBanner() {
+    const btn = document.getElementById('itam-launch');
+    if (!btn) return;
+    let banner = 0;
+    try {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      for (const node of document.elementsFromPoint(Math.round(vw * 0.2), vh - 6)) {
+        if (node.closest && node.closest('.itam-launch, .itam-panel, .itam-toasts, .itam-dd-menu'))
+          continue;
+        const cs = getComputedStyle(node);
+        if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+        const r = node.getBoundingClientRect();
+        // Anchored to the bottom edge, in the lower half, near-full width → a banner.
+        if (r.bottom >= vh - 4 && r.top > vh * 0.4 && r.width >= vw * 0.75) {
+          banner = Math.min(Math.round(r.height), Math.round(vh * 0.5));
+          break;
+        }
+      }
+    } catch {
+      /* elementsFromPoint/getComputedStyle unavailable — keep the default offset */
+    }
+    btn.style.bottom = (banner ? banner + 12 : 16) + 'px';
   }
 
   /** On a supported page, fetch (cached) the entity and inject the inline header
@@ -2587,12 +2682,20 @@
     }
   }
 
-  /** Run on initial load and on every SPA route change. */
-  let lastPath = '';
+  /** Run on initial load and on every SPA route change. Keyed on the path PLUS the
+   *  effective entity, so selecting a different album in a library detail pane —
+   *  which doesn't change the URL but does change the captured entity — still
+   *  refreshes the header UI. */
+  let lastKey = '';
   let placeStop = null;
   function onRoute() {
-    if (location.pathname === lastPath) return;
-    lastPath = location.pathname;
+    // Cheap each tick: keep the launcher clear of any bottom banner that appeared
+    // or dismissed without a route change (e.g. Apple's locale prompt).
+    adjustLauncherForBanner();
+    const p = parsePage();
+    const key = location.pathname + ' ' + (p ? `${p.type}:${p.id}` : '');
+    if (key === lastKey) return;
+    lastKey = key;
     // Clear stale inline UI from the previous view.
     document.querySelector('.itam-badges')?.remove();
     document.querySelector('.itam-inline-actions')?.remove();
@@ -2604,9 +2707,10 @@
    *  album header (and resolves the MusicKit token) at very different times across
    *  albums — ones with an editorial synopsis or many tracks render notably later —
    *  so the old fixed ~5s retry window left the badges/buttons missing on those
-   *  (while the on-demand panel always worked). A MutationObserver plus a bounded
-   *  poll keep trying until placed, or ~30s. fetchEntity is cached and
-   *  maybeHeaderUI is serialised, so repeated attempts are cheap. */
+   *  (while the on-demand panel always worked). A MutationObserver plus a poll keep
+   *  trying; after 30s without placing they fall back to a slow poll that keeps
+   *  retrying for the route's lifetime (so a late/awkward header still gets badges).
+   *  fetchEntity is cached and maybeHeaderUI is serialised, so attempts are cheap. */
   function placeHeaderUI() {
     if (placeStop) placeStop(); // cancel a previous route's attempts
     const placed = () =>
@@ -2614,6 +2718,8 @@
     const startedAt = Date.now();
     let everPlaced = false;
     let debounce = null;
+    let obs = null;
+    let poll = null;
     const attempt = () => {
       // maybeHeaderUI is idempotent — it (re-)injects only when the badges/actions
       // are MISSING. So this both places them late AND re-places them if Apple
@@ -2621,11 +2727,18 @@
       // appearance (the inline UI would vanish on a re-render and never return).
       maybeHeaderUI();
       if (placed()) everPlaced = true;
-      // Give up only if nothing has EVER placed after 30s — i.e. there is
-      // genuinely nothing to place here (e.g. a logged-out song page). Once it has
-      // placed, keep watching for the route's lifetime so a later wipe is
-      // re-injected; the observer is torn down on the next route change (placeStop).
-      else if (!everPlaced && Date.now() - startedAt > 30000) stop();
+      // If nothing has EVER placed after 30s, stop the chatty per-mutation observer
+      // (the anchor isn't rendering imminently) but KEEP a slow poll for the route's
+      // lifetime — so a header that appears much later, or a layout ITAM couldn't
+      // anchor at first, still gets badges rather than being given up on for good
+      // (a cause of the "inconsistent badges" reports). Torn down on the next route
+      // change via placeStop.
+      else if (!everPlaced && obs && Date.now() - startedAt > 30000) {
+        obs.disconnect();
+        obs = null;
+        if (poll) clearInterval(poll);
+        poll = setInterval(attempt, 4000);
+      }
     };
     // Debounce the (very chatty) SPA mutations so attempt() runs at most ~3×/s.
     const schedule = () => {
@@ -2635,12 +2748,12 @@
         attempt();
       }, 350);
     };
-    const obs = new MutationObserver(schedule);
+    obs = new MutationObserver(schedule);
     obs.observe(document.body, { childList: true, subtree: true });
-    const poll = setInterval(attempt, 1200);
+    poll = setInterval(attempt, 1200);
     function stop() {
-      obs.disconnect();
-      clearInterval(poll);
+      if (obs) obs.disconnect();
+      if (poll) clearInterval(poll);
       if (debounce) clearTimeout(debounce);
       if (placeStop === stop) placeStop = null;
     }
@@ -2661,6 +2774,7 @@
   hookHistory('pushState');
   hookHistory('replaceState');
   window.addEventListener('popstate', onRoute);
+  window.addEventListener('resize', adjustLauncherForBanner); // re-clear the banner
   setInterval(onRoute, 1500);
 
   // Close any open cover-art dropdown when clicking elsewhere on the page.
@@ -2669,6 +2783,7 @@
   });
 
   registerMenu();
+  installEntityCapture(); // watch the page's catalog requests (library/no-id views)
   ensureLauncher();
   onRoute();
 })();

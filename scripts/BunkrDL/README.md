@@ -242,12 +242,17 @@ This script ships verbatim (no build step) so you can read every line.
 - **“Could not read this album's file list.”** Bunkr may have changed the page;
   reload, and if it persists the `window.albumFiles` format likely changed (see
   _How it works_).
-- **Downloads fail / stop.** Usually Bunkr rate limiting (BunkrDL backs off and
-  retries) or a changed download API (see _How it works_). Try increasing
-  _Delay between files_. The exact reason is shown **in the progress panel** (a
-  red **`❌ <message>`**) and logged to the **browser console** (`F12` → Console →
-  a `[BunkrDL] … failed: …` line) — include that message when reporting an issue.
-  API calls now time out (≈45 s) instead of hanging indefinitely at "0 B".
+- **Downloads fail / stop — "network error" after the first file.** Bunkr's CDN
+  often **resets the connection** on rapid requests instead of returning a 429, so
+  the first file downloads but the next few "network-error". BunkrDL now treats a
+  network error / timeout like a rate-limit: it **backs off escalatingly** (5 s,
+  doubling) before retrying instead of hammering the host, and **single-file
+  downloads retry too** (they used to fail on the first hiccup). If it still fails
+  after the retries, raise _Delay between files_ or _Max retries per file_. The
+  exact reason is shown **in the progress panel** (a red **`❌ <message>`**) and
+  logged to the **browser console** (`F12` → Console → a `[BunkrDL] … failed: …`
+  line) — include that message when reporting an issue. API calls also time out
+  (≈45 s) instead of hanging indefinitely at "0 B".
 - **Tab runs out of memory.** Lower _Max ZIP size_ or turn off _ZIP bundling_.
 - **The "Zipping…" step takes a while / looks stuck.** Building a large ZIP runs
   in the browser tab, so it's the slow part of a big album (the downloads have
