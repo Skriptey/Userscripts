@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.9
+// @version       1.7.10
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -2658,6 +2658,17 @@
    *  UI: format badges (albums) + the action row. Best-effort — the floating
    *  launcher still works on demand if nothing can be placed. */
   let headerUIBusy = false; // serialise attempts so only one fetchEntity runs at a time
+  // De-duped diagnostic: maybeHeaderUI runs many times per page, so log the inline-UI
+  // outcome only when it CHANGES. This makes "badges missing" diagnosable from the
+  // console without spam — one line tells you whether the entity fetched, how many
+  // displayable formats it had, and whether the badges/actions actually placed.
+  // (Logs ids/counts only — never lyrics or other content.)
+  let lastHeaderDiag = '';
+  function headerDiag(msg) {
+    if (msg === lastHeaderDiag) return;
+    lastHeaderDiag = msg;
+    console.log(`[ITAM] ${msg}`);
+  }
   async function maybeHeaderUI() {
     if (headerUIBusy) return;
     const page = parsePage();
@@ -2675,8 +2686,17 @@
       const model = await fetchEntity(page);
       if (page.type === 'album') injectBadges(model);
       injectActions(model, page);
-    } catch {
-      /* token/API not ready or failed — launcher still works on demand */
+      headerDiag(
+        `header UI ${page.type} ${page.id}: formats=${model.formats ? model.formats.length : '?'}` +
+          `, badges=${document.querySelector('.itam-badges') ? 'placed' : wantBadges ? 'MISSING' : 'n/a'}` +
+          `, actions=${document.querySelector('.itam-inline-actions') ? 'placed' : 'MISSING'}`,
+      );
+    } catch (err) {
+      // Was silent — the usual cause of "no badges AND no console output": the
+      // catalog token/entity isn't ready yet (placeHeaderUI keeps retrying).
+      headerDiag(
+        `header UI ${page.type} ${page.id}: entity not ready — ${err.status || err.message}`,
+      );
     } finally {
       headerUIBusy = false;
     }
