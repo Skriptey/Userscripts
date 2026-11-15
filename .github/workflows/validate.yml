@@ -44,5 +44,7 @@ jobs:
         run: npm run format:check
       - name: Validate userscript metadata
         run: node tools/validate-metadata.mjs
+      - name: Offline tests (lyrics parsers, ZIP writer, token-capture hook)
+        run: npm test
       - name: Ensure install index builds
         run: node tools/build-index.mjs

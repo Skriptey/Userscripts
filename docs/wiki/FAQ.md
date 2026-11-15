@@ -14,6 +14,10 @@ for scripts that download files (best `GM_xmlhttpRequest`/`GM_download` support)
 Yes. They ship verbatim — no build step, no minification. Read the `.user.js`
 before installing; each declares its permissions in the metadata block.
 
+**Q. Are downloaded lyrics free to share?**
+No. Lyrics are licensed content that belongs to their owners. The lyrics downloads in
+these scripts are for **personal use only**.
+
 **Q. How do updates work?**
 Each script's `@updateURL` points at its published copy, so your manager
 auto-updates it. The version bumps on every change.
@@ -365,22 +369,45 @@ data.
 ## Deezer Enhancer
 
 **Q. Do I need a Deezer account?**
-No — it uses Deezer's public, no-auth REST API, so barcode, ISRCs, label info,
-and contributors all work without logging in.
+Not for the core features — barcode, ISRCs, label info and contributors come from
+Deezer's public, no-auth REST API. Lyrics and the internal-data layer are optional,
+off by default, and work with your own logged-in session.
 
-**Q. Why no audio-quality badges or lyrics, unlike ITAM/Tidal/Qobuz?**
-Those need Deezer's **internal** endpoints (a logged-in session), which this
-v1 doesn't use — it's public-API-only for now. See **Scope / roadmap** in the
-[Deezer Enhancer](Deezer-Enhancer) page for what's planned.
+**Q. How do I get lyrics / quality badges?**
+Both are switched **off** by default. In your userscript manager's menu turn on
+**Download Lyrics button** (then reload), and/or **Deezer internal data (gw-light,
+needs login)** for the quality badges and full credits.
+
+**Q. Do I need to be logged in for Deezer lyrics?**
+Yes, by default. If you're logged out you can switch on **Lyrics when logged out
+(anonymous token, unofficial)**. It uses an anonymous token Deezer's own site can hand
+out; it is undocumented, may stop working at any time, and isn't supported — turning it
+on shows a warning to that effect.
+
+**Q. Is the word-by-word timing kept?**
+Yes. Word-by-Word lyrics are saved as enhanced LRC (`[00:12.34]<00:12.34>Hello
+<00:12.80>world`). Turn on **Word-by-Word also saves raw .json** to keep Deezer's raw
+timing data too. Songs without word timing fall back to line timing, then to plain text.
+
+**Q. What is the gw-light option and is it safe?**
+"gw-light" is Deezer's own internal website API. The option is off by default, uses only
+your own session, and is read-only (the code only allows three fixed read methods and
+copies only named fields — never stream tokens or links). Because it is undocumented it
+can break; then the public data is shown instead.
+
+**Q. Why does the quality badge say "log in to see quality"?**
+Deezer reports every file size as 0 for logged-out and free sessions, so the script can't
+tell which formats exist and says so rather than showing a misleading "MP3 only".
 
 **Q. Are the "contributors" the same as songwriter credits?**
-No — Deezer's public `contributors` field is mainly performers, not full
-songwriter/composer credits (those live on Deezer's internal API too).
+Not by default — Deezer's public `contributors` field is mainly performers. With the
+internal-data layer on (and **Full credits** on) the panel shows the full credits
+(songwriters, producers, publishers) instead.
 
 **Q. Can I turn off just the contributors list, or just cover art?**
 Yes — **Show contributors** and **Download cover art button** are independent
-menu toggles, alongside **Show barcode (UPC) & ISRCs** and **Integrate Harmony
-lookup**.
+menu toggles, alongside **Show barcode (UPC) & ISRCs**, **Integrate Harmony
+lookup**, **Download Lyrics button** and the internal-data switches.
 
 ## Discogs Enhancer
 

@@ -23,7 +23,8 @@
     "format:check": "prettier --check .",
     "validate": "node tools/validate-metadata.mjs",
     "build:index": "node tools/build-index.mjs",
-    "check": "npm run lint && npm run format:check && npm run validate",
+    "test": "node tools/test-lyrics.mjs",
+    "check": "npm run lint && npm run format:check && npm run validate && npm run test",
     "build": "npm run validate && npm run build:index"
   },
   "devDependencies": {
