@@ -29,6 +29,11 @@ API** — no login required.
 - **MagicISRC** — resolves the album's **MusicBrainz release** by its barcode, then
   opens MagicISRC pre-filled (only when you click).
 - **Harmony lookup** — opens a Harmony release lookup for the Deezer album + its UPC.
+  Deezer's API usually returns a clean digit-only UPC, but as of v1.0.2 the value is
+  still passed through the same **barcode normaliser** used across the family
+  (strips formatting, length-gates to a plausible GTIN) before it reaches Harmony or
+  the MusicBrainz lookup — defensive hardening, not a fix for an observed Deezer bug
+  (see [Discogs Enhancer](../discogs-enhancer/README.md) for the bug it fixes there).
 - **Cover-art download** — saves the high-resolution cover as
   `<artist> - <album>_Cover.jpg`.
 
@@ -60,6 +65,10 @@ contributors; `GET /album/<id>/tracks` carries each track's `isrc` directly (all
 in one call). Cover art is on `cdn-images.dzcdn.net` (CORS-open). The **only**
 cross-origin call is the MusicBrainz barcode→MBID lookup for MagicISRC
 (`GM_xmlhttpRequest` + descriptive User-Agent → `@connect musicbrainz.org`, on click).
+The UPC is normalised to a bare digit string (`normaliseGtin`, shared with the other
+five Harmony-linked scripts) before it's used in the Harmony URL or the MusicBrainz
+`barcode:` query, so a non-GTIN value resolves to "no lookup" rather than a request
+that can never match.
 
 ## Security & permissions
 

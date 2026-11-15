@@ -39,5 +39,7 @@ Userscript-manager menu (live labels): **Show audio quality**, **Inline quality 
 
 Reuses the logged-in player's **`app_id` + `X-User-Auth-Token`** (captured by hooking the
 player's own fetch/XHR). **Metadata only** — never computes `request_sig` / calls
-`getFileUrl`. See the per-script
+`getFileUrl`. As of v1.0.2 the UPC is normalised to a bare digit string before the
+Harmony/MusicBrainz handoff (defensive hardening shared with the other Harmony-linked
+scripts). See the per-script
 [README](https://github.com/Skriptey/Userscripts/blob/main/scripts/qobuz/README.md).

@@ -59,7 +59,11 @@ special: Apple redirects them to `music.apple.com`, where the script runs.
   MagicISRC blank). The lookup runs **only when you click** the button.
 - **Harmony lookup** — opens a [Harmony](https://harmony.pulsewidth.org.uk/)
   release lookup for the album with the main providers pre-selected and the
-  album's UPC pre-filled (album pages).
+  album's UPC pre-filled (album pages). As of v1.7.11 the UPC is passed through a
+  shared **barcode normaliser** (strips formatting, length-gates to a plausible
+  GTIN) before reaching Harmony or the MusicBrainz lookup — defensive hardening for
+  the same class of bug that hit [Discogs Enhancer](../discogs-enhancer/README.md),
+  since Apple's amp-api usually returns a clean digit-only UPC.
 - **Cover-art download** — saves the **highest-resolution** static cover as
   `<artist> - <album>_Cover.jpg`. When the album has **animated (motion)
   artwork**, the button becomes a dropdown — **Static**, **Square animated**,
@@ -182,7 +186,9 @@ MusicBrainz web service
 the descriptive `User-Agent` MusicBrainz requires and respecting its ~1 req/sec
 rate limit), prefers an `Official` release, then opens
 `https://magicisrc.kepstin.ca/?mbid=<id>&isrc1=…&isrc2=…`. No barcode / no MB match
-→ a toast pointing at the Harmony button; nothing is opened blank.
+→ a toast pointing at the Harmony button; nothing is opened blank. The UPC is
+normalised to a bare digit string (`normaliseGtin`) before it's used in either the
+Harmony URL or this MusicBrainz `barcode:` query.
 
 If it breaks: Apple may rotate the token location or API shape — check
 `getDevToken`/`scrapeBundleToken` and `fetchEntity`/`parseEntity`. Apple Music's

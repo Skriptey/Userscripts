@@ -40,8 +40,10 @@ function findScripts() {
   for (const slug of readdirSync(SCRIPTS_DIR).sort()) {
     const dir = join(SCRIPTS_DIR, slug);
     if (!statSync(dir).isDirectory()) continue;
-    // Example/template scripts stay in the repo (CONTRIBUTING points new authors
-    // at them) but are NOT listed on the Pages install index.
+    // Anything named example* is never listed on the Pages install index.
+    // No example script exists today (the old scripts/example-hello-world/ was
+    // removed), but the guard stays as a cheap safety net so a future template
+    // can be added without accidentally shipping it to users.
     if (/^example/i.test(slug)) continue;
     // Private scripts: a folder containing a `.privatescript` marker is excluded
     // from the install index. The publish workflow additionally strips such

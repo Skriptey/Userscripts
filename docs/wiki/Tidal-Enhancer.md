@@ -40,5 +40,7 @@ catalog API, default `US`).
 
 Reads Tidal's **CORS-open** `api.tidal.com/v1` with a public, login-free app token — no
 account needed. The only third-party call is the MusicBrainz barcode lookup for
-MagicISRC (on click). See the per-script
+MagicISRC (on click). As of v1.0.2 the UPC is normalised to a bare digit string before
+the Harmony/MusicBrainz handoff (defensive hardening shared with the other
+Harmony-linked scripts). See the per-script
 [README](https://github.com/Skriptey/Userscripts/blob/main/scripts/tidal/README.md).

@@ -40,6 +40,7 @@ Userscripts/
 ├── site/                        # generated Pages output (built in CI, git-ignored)
 ├── .github/                     # workflows, issue/PR templates, Dependabot
 ├── .claude/                     # Claude context + memory (committed, portable)
+├── .OpenAI/                     # Codex context (points at .claude/; dev repo only)
 ├── LICENSE                      # GPL-3.0
 ├── SECURITY.md                  # how to report vulnerabilities
 └── CONTRIBUTING.md              # how to add a script
@@ -65,9 +66,9 @@ Install URLs are therefore stable:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). In short: copy
-[`scripts/example-hello-world/`](scripts/example-hello-world/), edit the
-metadata + code, run `npm run validate`, and open a pull request.
+See [CONTRIBUTING.md](CONTRIBUTING.md). In short: create
+`scripts/<slug>/<slug>.user.js`, fill in the metadata block, run
+`npm run check`, and open a pull request.
 
 ## Security
 

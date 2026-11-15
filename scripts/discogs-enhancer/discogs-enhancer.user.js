@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Discogs Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.0.1
+// @version       1.0.2
 // @description   Discogs Enhancer — on discogs.com release pages, gives a clean structured panel + one-click copy/export of the barcode, catalog number, label, format and the full credits, plus a Harmony cross-service lookup (and a MagicISRC link when ISRCs are present). A Discogs-flavoured sibling of ITAM Enhancer (public no-auth API).
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -49,10 +49,17 @@
 //      `styles`, `year`, `country`, release-level `extraartists` and per-track
 //      `tracklist[].extraartists` (the full credits, grouped by role).
 //    • Harmony — opens a Harmony cross-service lookup for the Discogs release URL +
-//      barcode (Harmony accepts Discogs release URLs).
+//      barcode (Harmony accepts Discogs release URLs). Discogs stores barcodes exactly
+//      as printed on the release ("4 943674 060023", "7-24385-12332-1", ...), but Harmony's
+//      ?gtin= param hard-rejects anything but a bare digit string of a valid GTIN length —
+//      so the barcode is run through normaliseGtin() (digits-only, length-gated to
+//      8/12/13/14) before it reaches the URL; the panel/copy/JSON views keep the raw,
+//      as-printed value untouched.
 //    • MagicISRC — only when the release actually carries ISRCs (rare on Discogs); it
 //      resolves the MusicBrainz release MBID from the barcode (GM_xmlhttpRequest + the
 //      required descriptive User-Agent → @connect musicbrainz.org), then opens MagicISRC.
+//      The barcode is normalised the same way first (MusicBrainz's Lucene `barcode:`
+//      search only matches the bare digit string; a spaced barcode never matches).
 //
 //  NOT covered: Discogs release IMAGES require an authenticated user token, so cover-art
 //  download is out of scope for this no-auth v1.
@@ -163,10 +170,90 @@
   }
 
   // --- Harmony --------------------------------------------------------------
+  /**
+   * Normalise a human-formatted barcode into the bare digit string ("GTIN")
+   * that machine consumers accept, or '' when the value cannot plausibly be one.
+   *
+   * WHY THIS EXISTS: Discogs stores barcodes exactly as printed on the release
+   * ("4 943674 060023", "7-24385-12332-1", scanner cruft, sometimes plain text
+   * like "none" or a catalogue number). Harmony's /release endpoint validates
+   * ?gtin= with /^\d+$/ plus a length gate of {8, 12, 13, 14} and hard-errors on
+   * anything else ("GTIN '…' contains invalid non-numeric characters" — the bug
+   * this fixes) — it only .trim()s the value, it never strips interior spaces
+   * or hyphens (verified against kellnerd/harmony utils/gtin.ts + server/state.ts,
+   * 2026-08-21). Likewise MusicBrainz's Lucene `barcode:` search only matches
+   * the bare digit string a spaced barcode never matches. So before a barcode
+   * leaves this script for a machine consumer we:
+   *
+   *   1. map fullwidth digits (U+FF10–U+FF19, seen on Japanese releases) to
+   *      ASCII so step 3 does not silently DROP them — dropping one would
+   *      truncate the code yet could still pass the length gate;
+   *   2. bail out to '' if any OTHER Unicode decimal-digit family (Arabic-Indic,
+   *      Devanagari, …) is still present after step 1 — stripping those with an
+   *      ASCII-only filter would silently drop them too, and a mixed-digit value
+   *      that happens to land on a valid GTIN length would then be WRONG rather
+   *      than merely absent, which is worse;
+   *   3. strip every remaining non-ASCII-digit character: spaces, hyphens, dots,
+   *      NBSP U+00A0, narrow NBSP U+202F, figure space U+2007, tabs, '>' scanner
+   *      arrows … everything;
+   *   4. length-gate to the valid GTIN lengths {8, 12, 13, 14} (EAN-8, UPC-A,
+   *      EAN-13, GTIN-14). Anything else — a catalogue number like
+   *      "CDP 7 46001 2" (7 digits), "none" (no digits), or two barcodes mashed
+   *      into one field — returns '' so callers send NOTHING rather than junk
+   *      (Harmony treats an empty/absent gtin as harmless and still does the
+   *      URL-based lookup).
+   *
+   * Leading zeros are preserved (string ops only, never Number()): Harmony
+   * accepts a UPC-12 as-is and a zero-padded EAN-13 equally, but an 11-digit
+   * string with a lost leading zero would be rejected. We deliberately do NOT
+   * validate the check digit: a mistyped source barcode with a valid length
+   * should reach Harmony verbatim so the user sees its precise "Checksum of
+   * GTIN '…' is invalid" feedback instead of a silent no-op here.
+   *
+   * TRADE-OFF: MusicBrainz's `barcode` field is digits-only but NOT restricted
+   * to GTIN lengths, so a clean but non-standard-length numeric barcode (e.g.
+   * 11 digits) that could match on MusicBrainz today is also gated to '' here.
+   * This is intentional — one helper, one contract, applied uniformly — rather
+   * than a Harmony-only gate; such barcodes are rare in practice.
+   *
+   * NOTE: intentionally NOT applied to the panel display, the "Copy barcode"
+   * button, or the JSON export — those keep the source service's raw
+   * formatting (fidelity to what the page shows); normalisation happens only
+   * where the value flows out to a machine consumer (Harmony URL,
+   * MusicBrainz barcode query).
+   *
+   * @param {string|number|null|undefined} value - Raw barcode/UPC/GTIN as
+   *   provided by the source service (may be human-formatted or junk).
+   * @returns {string} Bare ASCII digits of a plausible GTIN, or '' if none.
+   */
+  function normaliseGtin(value) {
+    if (value === null || value === undefined) return '';
+    // 1. fullwidth digits → ASCII (fixed charcode offset 0xFEE0)
+    const mapped = String(value).replace(/[０-９]/g, (d) =>
+      String.fromCharCode(d.charCodeAt(0) - 0xfee0),
+    );
+    // 2. any OTHER Unicode decimal-digit family left after the fullwidth
+    //    mapping would be silently dropped by the ASCII-only strip below —
+    //    bail out rather than risk a truncated-but-valid-length wrong code.
+    if (/\p{Nd}/u.test(mapped.replace(/[0-9]/g, ''))) return '';
+    // 3. drop everything that is not an ASCII digit
+    const digits = mapped.replace(/[^0-9]/g, '');
+    // 4. only plausible GTIN lengths pass (EAN-8 / UPC-A / EAN-13 / GTIN-14)
+    return [8, 12, 13, 14].includes(digits.length) ? digits : '';
+  }
+
+  /**
+   * Build a Harmony release-lookup URL for a Discogs release, with the
+   * cross-service providers pre-selected and the barcode passed through
+   * normaliseGtin() first — an empty result is harmless (Harmony skips the
+   * GTIN lookup and falls back to the URL-based one), whereas passing the
+   * raw Discogs-formatted barcode straight through is what caused Harmony's
+   * "contains invalid non-numeric characters" error.
+   */
   function buildHarmonyUrl(url, gtin) {
     const p = new URLSearchParams();
     p.set('url', url);
-    p.set('gtin', gtin || '');
+    p.set('gtin', normaliseGtin(gtin));
     p.set('region', '');
     for (const provider of HARMONY_PROVIDERS) p.set(provider, '');
     return `${HARMONY_BASE}/release?${p.toString()}`;
@@ -180,7 +267,18 @@
   }
 
   // --- MagicISRC via a MusicBrainz barcode lookup (explicit click only) ------
+  /**
+   * Resolve a MusicBrainz release MBID from a barcode. The barcode is run
+   * through normaliseGtin() first — MusicBrainz's Lucene `barcode:` field
+   * only ever holds a bare digit string, so a Discogs-formatted value like
+   * "4 943674 060023" would tokenise into `barcode:4 943674 060023` and never
+   * match. A value that isn't plausibly a GTIN (e.g. "none", a catalogue
+   * number) short-circuits to `null` — same outcome as "no MB match found" —
+   * without a doomed network round-trip.
+   */
   function lookupMusicBrainzMbid(upc) {
+    upc = normaliseGtin(upc);
+    if (!upc) return Promise.resolve(null); // no plausible GTIN → same as 'no MB match'
     const url = `${MUSICBRAINZ_BASE}/release?query=barcode:${encodeURIComponent(upc)}&fmt=json`;
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -208,7 +306,10 @@
   }
   async function submitToMagicIsrc(model) {
     if (!model.isrcs.length) return;
-    if (!model.barcode)
+    // Test the NORMALISED value, not the raw one: a raw "none" / catalogue-number
+    // placeholder in the Barcode field would otherwise slip past this check and
+    // trigger a MusicBrainz round-trip that can only ever come back empty.
+    if (!normaliseGtin(model.barcode))
       return toast('No barcode on this release — use the Harmony button to match/add it');
     toast('Looking up MusicBrainz…');
     let mbid;

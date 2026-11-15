@@ -7,8 +7,8 @@ body:
     id: script
     attributes:
       label: Which userscript?
-      description: Folder name under scripts/, e.g. example-hello-world.
-      placeholder: example-hello-world
+      description: Folder name under scripts/, e.g. discogs-enhancer.
+      placeholder: discogs-enhancer
     validations:
       required: true
   - type: input

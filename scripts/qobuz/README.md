@@ -34,7 +34,12 @@ the **barcode (UPC)** and **per-track ISRCs** — with one-click copy and a
 - **Barcode (UPC)** + **per-track ISRCs**; **label / genre / release / copyright**;
   **composer** credits.
 - **One-click copy** — barcode, a single ISRC, all ISRCs, or the whole record as JSON.
-- **MagicISRC** + **Harmony** cross-links; **cover-art download** (high-res).
+- **MagicISRC** + **Harmony** cross-links; **cover-art download** (high-res). As of
+  v1.0.2 the UPC is passed through a shared **barcode normaliser** (strips
+  formatting, length-gates to a plausible GTIN) before reaching Harmony's `?gtin=`
+  or the MusicBrainz `barcode:` query — defensive hardening for the same class of
+  bug that hit [Discogs Enhancer](../discogs-enhancer/README.md), since Qobuz's own
+  API is usually clean but not contractually guaranteed to be.
 
 ## Settings
 
@@ -52,6 +57,8 @@ requests. Calls go via `GM_xmlhttpRequest` (+ `@connect www.qobuz.com`). `album/
 `track/get` give `maximum_bit_depth`/`maximum_sampling_rate`/`hires` (quality), `upc`,
 per-track `isrc`, `label`, `copyright`, `genre`, `image`, and `performer`/`composer`. The
 only non-Qobuz call is the MusicBrainz barcode→MBID lookup for MagicISRC (on click).
+The `upc` is normalised to a bare digit string (`normaliseGtin`) before it's used in
+the Harmony URL or the MusicBrainz `barcode:` query.
 
 > **Metadata only.** The script never computes Qobuz's `request_sig` or calls
 > `getFileUrl` — it never touches streaming URLs.

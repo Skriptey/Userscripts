@@ -35,6 +35,11 @@ A **Spotify sibling of [ITAM Enhancer](../ITAMenhancer/)**. On
 - **MagicISRC** — resolves the album's **MusicBrainz release** by its barcode, then
   opens MagicISRC (only when you click).
 - **Harmony lookup** — opens a Harmony release lookup for the Spotify album + its UPC.
+  As of v1.0.2 the UPC is passed through a shared **barcode normaliser** (strips
+  formatting, length-gates to a plausible GTIN) before reaching Harmony or the
+  MusicBrainz lookup — defensive hardening for the same class of bug that hit
+  [Discogs Enhancer](../discogs-enhancer/README.md), since Spotify's own API is
+  usually clean but not contractually guaranteed to be.
 - **Cover-art download** — saves the cover (up to 640px on Spotify's public API) as
   `<artist> - <album>_Cover.jpg`.
 
@@ -61,6 +66,8 @@ most churn-resistant capture). The token is kept in memory and re-captured conti
 `GET /v1/albums/<id>` gives UPC / label / copyrights / images / simplified tracks;
 `GET /v1/tracks?ids=<batch>` adds per-track ISRC. Cover art is on `i.scdn.co`. The only
 non-Spotify call is the MusicBrainz barcode→MBID lookup for MagicISRC (on click).
+The UPC is normalised to a bare digit string (`normaliseGtin`) before it's used in
+the Harmony URL or the MusicBrainz `barcode:` query.
 
 ## Security & permissions
 

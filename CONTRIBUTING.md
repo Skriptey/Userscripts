@@ -6,11 +6,12 @@ install, so keep scripts readable and self-contained.
 
 ## Add a new script
 
-1. **Copy the template.** Duplicate
-   [`scripts/example-hello-world/`](scripts/example-hello-world/) to
-   `scripts/<slug>/`. The **folder name, the slug, and the `.user.js` filename
-   must all match** (e.g. `scripts/reddit-old-redirect/reddit-old-redirect.user.js`).
-   Use a short, lowercase, hyphenated slug.
+1. **Create the folder.** Add `scripts/<slug>/<slug>.user.js`. The **folder
+   name, the slug, and the `.user.js` filename must all match** (e.g.
+   `scripts/reddit-old-redirect/reddit-old-redirect.user.js`). Use a short,
+   lowercase, hyphenated slug. The quickest start is to copy the metadata block
+   from an existing script — [`scripts/discogs-enhancer/`](scripts/discogs-enhancer/)
+   is a compact one — and replace its contents.
 
 2. **Fill in the metadata block.** Required keys (CI enforces these via
    `tools/validate-metadata.mjs`):
@@ -51,8 +52,26 @@ install, so keep scripts readable and self-contained.
    npm run build:index   # optional: regenerate site/ to preview the index
    ```
 
-6. **Open a pull request.** The PR template checklist must pass; the
-   `Lint & validate`, `CodeQL`, and `Secret scan` checks run automatically.
+6. **Open a pull request.** The PR template checklist must pass; every check
+   in [CI checks](#ci-checks) below runs automatically.
+
+## CI checks
+
+Every pull request runs the checks below (see
+[`.github/workflows/`](.github/workflows/)). All of them are read-only against
+your PR — none of them can modify or publish anything.
+
+| Workflow                                                                            | What it checks                                                                                                                                                                                                                         | Run it locally                                                                                                                      |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [`validate.yml`](.github/workflows/validate.yml) — Lint & validate                  | ESLint, Prettier formatting, complete userscript metadata (`tools/validate-metadata.mjs`), and that `tools/build-index.mjs` builds the install index without error.                                                                    | `npm run check` (ESLint + Prettier check + metadata); `npm run build:index` for the index build                                     |
+| [`codeql.yml`](.github/workflows/codeql.yml) — CodeQL                               | Static analysis (security-extended query suite) over the JavaScript, including `*.user.js` (mapped to the JS extractor via `LGTM_INDEX_FILETYPES`).                                                                                    | No practical local equivalent; fix flagged issues per the Security tab / PR annotation.                                             |
+| [`dependency-audit.yml`](.github/workflows/dependency-audit.yml) — Dependency audit | `npm audit --audit-level=moderate` on the dev-tooling dependency tree; runs on manifest changes and weekly (Mondays).                                                                                                                  | `npm audit`                                                                                                                         |
+| [`secret-scan.yml`](.github/workflows/secret-scan.yml) — Secret scan                | Scans the full commit history with the `gitleaks` CLI for leaked secrets/tokens.                                                                                                                                                       | `gitleaks git --redact` (from a full clone; install the CLI per [gitleaks releases](https://github.com/gitleaks/gitleaks/releases)) |
+| [`lint.yml`](.github/workflows/lint.yml) — Lint Workflows                           | Lints `.github/workflows/**` with `actionlint` (undefined `needs:`, malformed `${{ }}` expressions, invalid `runs-on`, and real shell errors in `run:` blocks at `shellcheck --severity=error`). Only runs when workflow files change. | Install [`actionlint`](https://github.com/rhysd/actionlint) and run `actionlint -color` from the repo root                          |
+| [`pages.yml`](.github/workflows/pages.yml) — Deploy Pages                           | (Runs on push to `main`, not on PRs.) Validates metadata and rebuilds the install index, then deploys it to GitHub Pages.                                                                                                              | `npm run check` + `npm run build:index` cover the same validation/build steps                                                       |
+
+`publish.yml` (mirrors this repo to the public `Skriptey/Userscripts` repo) also
+only runs on push to `main`, never on a PR, so it never gates your change.
 
 ## Updating an existing script
 

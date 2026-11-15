@@ -1,0 +1,45 @@
+name: Dependency audit
+
+# Fails when `npm audit` reports a known vulnerability (moderate or higher) in
+# the dev-tooling dependency tree. Complements Dependabot alerts/updates, and —
+# unlike CodeQL / dependency-review — works on a Free-plan PRIVATE repo, so it
+# gates changes here as well as on the public mirror.
+#
+# Triggers: PRs/pushes touching the manifests, plus a weekly scan so newly
+# published advisories surface even when no dependency changes land.
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/dependency-audit.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/dependency-audit.yml'
+  schedule:
+    # Mondays 06:47 UTC (offset from the 06:17 CodeQL drift scan).
+    - cron: '47 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+      - name: Audit dependencies (moderate and above)
+        run: npm audit --audit-level=moderate

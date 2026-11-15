@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          Qobuz Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.0.1
+// @version       1.0.2
 // @description   Qobuz Enhancer — on play.qobuz.com / open.qobuz.com album & track pages, surfaces the exact audio quality (Hi-Res bit-depth/sample-rate), the barcode (UPC) and per-track ISRCs with one-click copy and a MagicISRC link, plus credits, a Harmony cross-service lookup, and high-resolution cover-art download. A Qobuz-flavoured sibling of ITAM Enhancer (reuses the logged-in player's own token).
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -60,8 +60,15 @@
 //      `performer`/`composer` (credits).
 //    • COVER — the album `image` (templated to the largest size) on static.qobuz.com.
 //    • MagicISRC — resolves the MusicBrainz release MBID from the barcode (one call;
-//      @connect musicbrainz.org), then opens MagicISRC.
+//      @connect musicbrainz.org), then opens MagicISRC. The `upc` is normalised to a
+//      bare digit string (normaliseGtin) before it is used to build the MusicBrainz
+//      query, since a formatted/junk value would either not match or would be sent
+//      as an inert '' (see the MagicISRC section below for why this defends against
+//      values Qobuz's own API is not contractually guaranteed to keep clean).
 //    • Harmony — opens a Harmony cross-service lookup for the Qobuz album URL + UPC.
+//      The UPC goes through the same normaliseGtin() before being placed in the
+//      Harmony ?gtin= query param, because Harmony hard-errors on anything that is
+//      not a bare {8,12,13,14}-digit string.
 //
 //  Requires a logged-in Qobuz subscriber session. METADATA ONLY — never touch
 //  getFileUrl / streaming-URL signing.
@@ -272,10 +279,97 @@
   }
 
   // --- Harmony --------------------------------------------------------------
+
+  /**
+   * Normalise a human-formatted barcode into the bare digit string ("GTIN")
+   * that machine consumers accept, or '' when the value cannot plausibly be one.
+   *
+   * WHY THIS EXISTS: Qobuz's API returns `upc` as a plain string. It is usually
+   * clean digits already (unlike Discogs, which stores barcodes exactly as
+   * printed on the sleeve), but the API gives no hard guarantee — releases can
+   * carry scanner cruft, stray separators, or non-ASCII digit forms, and this
+   * script reuses the same helper the other five Harmony-linked scripts in this
+   * repo ship, so the same defence applies here too. Harmony's /release
+   * endpoint validates ?gtin= with /^\d+$/ plus a length gate of {8, 12, 13, 14}
+   * and hard-errors on anything else ("GTIN '…' contains invalid non-numeric
+   * characters") — it only .trim()s the value, it never strips interior spaces
+   * or hyphens (verified in kellnerd/harmony utils/gtin.ts + server/state.ts).
+   * Likewise MusicBrainz's Lucene `barcode:` search only matches the bare
+   * digit string. So before a barcode leaves this script for a machine
+   * consumer we:
+   *
+   *   1. map fullwidth digits (U+FF10–U+FF19, seen on Japanese releases) to
+   *      ASCII, then bail out to '' if any OTHER Unicode decimal-digit form
+   *      (Arabic-Indic, Devanagari, …) is still present — mixing digit
+   *      families and then stripping only the non-ASCII ones would silently
+   *      DROP them, which could shorten the code into a different value that
+   *      still happens to pass the length gate below. A wrong-but-plausible
+   *      GTIN is worse than sending none, so we refuse instead of guessing;
+   *   2. strip every remaining non-ASCII-digit character: spaces, hyphens,
+   *      dots, NBSP U+00A0, narrow NBSP U+202F, figure space U+2007, tabs,
+   *      '>' scanner arrows … everything;
+   *   3. length-gate to the valid GTIN lengths {8, 12, 13, 14} (EAN-8, UPC-A,
+   *      EAN-13, GTIN-14). Anything else — a catalogue number, 'none' (no
+   *      digits), or two barcodes mashed into one field — returns '' so
+   *      callers send NOTHING rather than junk (Harmony treats an empty/absent
+   *      gtin as harmless and still does the URL-based lookup).
+   *
+   *      TRADE-OFF: MusicBrainz's own barcode field is digits-only but is NOT
+   *      restricted to these lengths, so a clean odd-length numeric barcode
+   *      (e.g. 11 digits) that could have matched a MusicBrainz release today
+   *      is deliberately no longer queried once this gate applies. Accepted in
+   *      favour of one consistent helper shared with the (length-strict)
+   *      Harmony URL — such barcodes are rare in practice, and a future
+   *      enhancement could split the two paths if that ever matters.
+   *
+   * Leading zeros are preserved (string ops only, never Number()): Harmony
+   * accepts a UPC-12 as-is and a zero-padded EAN-13 equally, but an 11-digit
+   * string with a lost leading zero would be rejected. We deliberately do NOT
+   * validate the check digit: a mistyped source barcode with a valid length
+   * should reach Harmony verbatim so the user sees its precise "Checksum of
+   * GTIN '…' is invalid" feedback instead of a silent no-op here.
+   *
+   * NOTE: intentionally NOT applied to the panel display, the "Copy barcode"
+   * button, or the JSON export — those keep the source service's raw
+   * formatting (fidelity to what the page shows); normalisation happens only
+   * where the value flows out to a machine consumer (Harmony URL,
+   * MusicBrainz barcode query).
+   *
+   * @param {string|number|null|undefined} value - Raw barcode/UPC/GTIN as
+   *   provided by the source service (may be human-formatted or junk).
+   * @returns {string} Bare ASCII digits of a plausible GTIN, or '' if none.
+   */
+  function normaliseGtin(value) {
+    if (value === null || value === undefined) return '';
+    // 1. fullwidth digits → ASCII (fixed charcode offset 0xFEE0)
+    const mapped = String(value).replace(/[０-９]/g, (d) =>
+      String.fromCharCode(d.charCodeAt(0) - 0xfee0),
+    );
+    // 2. any OTHER Unicode decimal-digit family left after the fullwidth
+    //    mapping would be silently dropped by the ASCII-only strip below —
+    //    bail out rather than risk a truncated-but-valid-length wrong code.
+    if (/\p{Nd}/u.test(mapped.replace(/[0-9]/g, ''))) return '';
+    // 3. drop everything that is not an ASCII digit
+    const digits = mapped.replace(/[^0-9]/g, '');
+    // 4. only plausible GTIN lengths pass (EAN-8 / UPC-A / EAN-13 / GTIN-14)
+    return [8, 12, 13, 14].includes(digits.length) ? digits : '';
+  }
+
+  /**
+   * Build a Harmony release-lookup URL for a Qobuz album page, with our
+   * cross-service providers pre-selected and the barcode passed through as a
+   * GTIN hint. `gtin` is normalised to a bare digit string first (see
+   * normaliseGtin) — Harmony hard-errors on a human-formatted or non-GTIN-
+   * length value; an empty result is harmless and just falls back to the
+   * URL-only lookup.
+   * @param {string} url - The Qobuz album page URL to look up on Harmony.
+   * @param {string|number|null|undefined} gtin - Raw UPC/barcode, if known.
+   * @returns {string} A fully-formed Harmony /release URL.
+   */
   function buildHarmonyUrl(url, gtin) {
     const p = new URLSearchParams();
     p.set('url', url);
-    p.set('gtin', gtin || '');
+    p.set('gtin', normaliseGtin(gtin));
     p.set('region', '');
     for (const provider of HARMONY_PROVIDERS) p.set(provider, '');
     return `${HARMONY_BASE}/release?${p.toString()}`;
@@ -289,7 +383,22 @@
   }
 
   // --- MagicISRC via a MusicBrainz barcode lookup (explicit click only) ------
+
+  /**
+   * Resolve a MusicBrainz release MBID from a barcode.
+   *
+   * The barcode is normalised to a bare digit string first (normaliseGtin) —
+   * MusicBrainz's Lucene `barcode:` field only ever holds/matches bare digits,
+   * so a human-formatted value (e.g. a spaced UPC) would tokenise and never
+   * match. A value that isn't plausibly a GTIN after normalisation (e.g. a
+   * catalogue number or 'none') resolves to null immediately, with no network
+   * round-trip — the same outcome callers already treat as "no MB match".
+   * @param {string|number|null|undefined} upc - Raw barcode/UPC to look up.
+   * @returns {Promise<string|null>} The MBID, or null if nothing matched.
+   */
   function lookupMusicBrainzMbid(upc) {
+    upc = normaliseGtin(upc);
+    if (!upc) return Promise.resolve(null); // no plausible GTIN → same as 'no MB match'
     const url = `${MUSICBRAINZ_BASE}/release?query=barcode:${encodeURIComponent(upc)}&fmt=json`;
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -318,7 +427,10 @@
   async function submitToMagicIsrc(model) {
     const isrcs = model.tracks.map((t) => t.isrc).filter(Boolean);
     if (!isrcs.length) return;
-    if (!model.upc)
+    // Test the normalised value, not the raw model.upc — a placeholder like 'none' or a
+    // catalogue number is truthy but isn't a usable GTIN, so this reports the accurate
+    // 'no barcode' toast up front instead of a doomed MusicBrainz round-trip.
+    if (!normaliseGtin(model.upc))
       return toast('No barcode on this release — use the Harmony button to match/add it');
     toast('Looking up MusicBrainz…');
     let mbid;

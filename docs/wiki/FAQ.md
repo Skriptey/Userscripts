@@ -18,6 +18,20 @@ before installing; each declares its permissions in the metadata block.
 Each script's `@updateURL` points at its published copy, so your manager
 auto-updates it. The version bumps on every change.
 
+**Q. Why did the Harmony button say my GTIN contains invalid non-numeric characters?**
+Discogs stores barcodes exactly as printed on the release (spaces, hyphens, scanner
+cruft — e.g. `4 943674 060023`), but Harmony's `?gtin=` parameter only accepts a bare
+digit string. This is fixed in **Discogs Enhancer v1.0.2** (and hardened as a
+defensive measure across all six Harmony-linked scripts — Deezer, Qobuz, Spotify,
+Tidal, and ITAM Enhancer v1.7.11): the barcode/UPC is normalised to digits-only and
+length-gated to a plausible GTIN (8/12/13/14 digits) before it's sent to Harmony or
+queried against MusicBrainz. A value that isn't plausibly a GTIN after stripping (a
+catalogue number, `none`, etc.) is sent as nothing rather than junk — the Harmony
+button still opens a URL-only lookup, and MagicISRC/"submit to MusicBrainz" flows
+show an accurate "no barcode" message instead of a doomed network request. The
+panel display, **Copy barcode**, and JSON export are unaffected — they keep showing
+the barcode exactly as the source service returned it.
+
 ---
 
 ## ITAM Enhancer
@@ -325,3 +339,137 @@ Only ones your session can already view, and only after you confirm the one-time
 Meta's internal endpoints and GraphQL `doc_id`s rotate and can't be tested
 without a live logged-in browser. Some surfaces (especially Facebook) may need
 tuning. Please report what works and what doesn't.
+
+## Tidal Enhancer
+
+**Q. Do I need to log into Tidal?**
+No. It reads Tidal's public, CORS-open catalog API (`api.tidal.com/v1`) with a
+public app token, so quality badges, barcode, ISRCs, and credits all work
+logged out.
+
+**Q. Where do the Lossless / Hi-Res / Atmos / 360 badges come from?**
+From Tidal's own `audioQuality`, `mediaMetadata.tags`, and `audioModes` fields
+— the same data the player uses, surfaced album-level and per-track. Turn them
+off with **Show audio quality** or just the inline placement with **Inline
+quality badges** in the menu.
+
+**Q. The barcode/credits panel isn't showing anything useful for my region.**
+Tidal's catalog is split by storefront. Set the **Country code** menu item to
+your Tidal storefront (e.g. `GB`, `DE`) if `US` doesn't have the release.
+
+**Q. What does the Harmony button send?**
+Only the album's barcode (UPC), normalised to a bare digit string first (see
+the barcode-normalisation question above) — never your account or session
+data.
+
+## Deezer Enhancer
+
+**Q. Do I need a Deezer account?**
+No — it uses Deezer's public, no-auth REST API, so barcode, ISRCs, label info,
+and contributors all work without logging in.
+
+**Q. Why no audio-quality badges or lyrics, unlike ITAM/Tidal/Qobuz?**
+Those need Deezer's **internal** endpoints (a logged-in session), which this
+v1 doesn't use — it's public-API-only for now. See **Scope / roadmap** in the
+[Deezer Enhancer](Deezer-Enhancer) page for what's planned.
+
+**Q. Are the "contributors" the same as songwriter credits?**
+No — Deezer's public `contributors` field is mainly performers, not full
+songwriter/composer credits (those live on Deezer's internal API too).
+
+**Q. Can I turn off just the contributors list, or just cover art?**
+Yes — **Show contributors** and **Download cover art button** are independent
+menu toggles, alongside **Show barcode (UPC) & ISRCs** and **Integrate Harmony
+lookup**.
+
+## Discogs Enhancer
+
+**Q. Why is there no cover-art download button, unlike the other enhancers?**
+Discogs' release images require an **authenticated user token**, which is out
+of scope for this no-auth v1 — see **No cover-art download** in the
+[Discogs Enhancer](Discogs-Enhancer) README.
+
+**Q. Why does MagicISRC only show up sometimes?**
+Discogs releases rarely carry ISRCs. The **Submit to MagicISRC** link only
+appears when the release actually has them.
+
+**Q. My release's barcode has spaces or dashes — will Harmony reject it?**
+No, not since v1.0.2. Discogs stores barcodes exactly as printed (e.g.
+`4 943674 060023`), so before handing it to Harmony or MusicBrainz the script
+strips it to bare digits and length-gates it to a plausible GTIN; the panel,
+**Copy barcode**, and the JSON export still show the original printed value.
+See the barcode-normalisation question in **General** above.
+
+**Q. Does it read anything beyond the release page?**
+No — everything comes from one call to Discogs' public `api.discogs.com`
+release endpoint, made with a descriptive User-Agent (Discogs throttles
+generic ones). No login, no tokens.
+
+## Spotify Enhancer
+
+**Q. Why do I need to be logged in, when Deezer/Tidal/Discogs don't require it?**
+Spotify's Web API is CORS-closed and login-gated, so the script reuses the
+**web player's own Bearer token** — sniffed off the player's own outgoing
+requests, never minted or exfiltrated — which only exists once you're logged
+in and playing/browsing.
+
+**Q. It's marked as a draft needing testing — is it safe to use?**
+It's written to Spotify's documented API but, unlike the CORS-open
+services in this family, it couldn't be verified headlessly, so token capture
+in particular may need tuning on a real logged-in session. Please report what
+works or doesn't.
+
+**Q. Why no songwriter credits or Canvas video?**
+Those live only on Spotify's internal `api-partner` GraphQL / `spclient`
+endpoints, which churn and need an extra `client-token` — a planned follow-up,
+not in this version.
+
+**Q. Is my Spotify session token sent anywhere else?**
+No — the captured Bearer token is sent only back to `api.spotify.com`. The
+only other network call is the MusicBrainz barcode lookup for MagicISRC
+(public barcode only, on click).
+
+## Qobuz Enhancer
+
+**Q. Why do I need a Qobuz subscription just to see metadata?**
+Qobuz has no anonymous catalog — every API call, even for basic metadata,
+needs a logged-in subscriber's session, so the script captures your player's
+own `app_id` and auth token to reuse them.
+
+**Q. Does this let me download or stream files, or bypass a subscription?**
+No. It's metadata-only — it never computes Qobuz's `request_sig` or calls
+`getFileUrl`, so it never touches streaming URLs.
+
+**Q. Where does the exact bit-depth/sample-rate (e.g. "24-bit / 192 kHz") come from?**
+Qobuz's own `album/get` / `track/get` API returns `maximum_bit_depth` and
+`maximum_sampling_rate` plus a `hires` flag — the most precise format data of
+any script in this family. Toggle the badges with **Show audio quality** /
+**Inline quality badges**.
+
+**Q. It's marked as a draft needing testing — why?**
+Every Qobuz endpoint needs a live logged-in subscription, so it couldn't be
+verified headlessly before release. The token-capture step in particular may
+need tuning — please report what works.
+
+## MB ISWC Seeder
+
+**Q. Do I need this if I already have ITAM Enhancer?**
+Only if you use ITAM's **Find ISWCs** → **Seed MB ↗** flow: this script does
+nothing by itself and only activates on a MusicBrainz Work page opened by that
+link (it checks for `?itam=1`). It's inert on every other MusicBrainz page.
+
+**Q. Does it submit the MusicBrainz edit for me?**
+No — never. It only shows the ISWC, title, and writers ITAM found so you can
+copy each writer into a relationship, review, and click **Enter edit**
+yourself. Unattended editing needs a registered MusicBrainz Bot account, which
+this isn't.
+
+**Q. Does it make any network requests?**
+No — it only reads the `itam-*` query parameters already in the page URL and
+renders a panel with `textContent` (no `innerHTML`), so there's nothing to
+send and no injection risk from those URL-sourced values.
+
+**Q. The helper panel isn't showing.**
+Check the **ISWC seed helper** toggle in your userscript manager's menu (it
+may have been switched off), and make sure you arrived via ITAM's **Seed MB
+↗** link rather than a plain MusicBrainz Work URL.

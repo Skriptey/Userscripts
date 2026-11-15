@@ -28,7 +28,9 @@ cross-service lookup, and **cover-art download**.
   as JSON.
 - **Label, copyright, release date.**
 - **MagicISRC** — resolves the MusicBrainz release by barcode, then opens MagicISRC.
-- **Harmony lookup** — cross-service release lookup for the Spotify album + UPC.
+- **Harmony lookup** — cross-service release lookup for the Spotify album + UPC. As of
+  v1.0.2 the UPC is normalised to a bare digit string before the Harmony/MusicBrainz
+  handoff (defensive hardening shared with the other Harmony-linked scripts).
 - **Cover-art download** — up to 640px (Spotify's public-API ceiling).
 
 ## Settings

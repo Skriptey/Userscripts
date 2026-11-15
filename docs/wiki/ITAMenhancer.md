@@ -46,6 +46,9 @@ covered automatically (Apple redirects them to Apple Music).
   barcode, then opens MagicISRC pre-filled with the release and its ISRCs.
 - **Harmony lookup** — opens a [Harmony](https://harmony.pulsewidth.org.uk/)
   cross-service release lookup, providers pre-selected and UPC pre-filled (albums).
+  As of v1.7.11 the UPC is normalised to a bare digit string before the
+  Harmony/MusicBrainz handoff (defensive hardening shared with the other
+  Harmony-linked scripts).
 - **Cover-art download** — static (highest-res JPEG, `<artist> - <album>_Cover.jpg`);
   and when the album has **animated (motion) artwork**, a dropdown for **Static /
   Square / Vertical / All** (`.mp4` — `…_SquareCover.mp4` / `…_VerticalCover.mp4`).

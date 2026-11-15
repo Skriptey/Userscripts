@@ -34,6 +34,11 @@ cross-service lookup**, and **high-resolution cover-art download**.
 - **MagicISRC** — resolves the album's **MusicBrainz release** by its barcode, then
   opens MagicISRC pre-filled (only when you click).
 - **Harmony lookup** — opens a Harmony release lookup for the Tidal album + its UPC.
+  As of v1.0.2 the UPC is passed through a shared **barcode normaliser** (strips
+  formatting, length-gates to a plausible GTIN) before reaching Harmony or the
+  MusicBrainz lookup — defensive hardening for the same class of bug that hit
+  [Discogs Enhancer](../discogs-enhancer/README.md), since Tidal's own API is
+  usually clean but not contractually guaranteed to be.
 - **Cover-art download** — saves the high-resolution cover as
   `<artist> - <album>_Cover.jpg`.
 
@@ -62,7 +67,9 @@ UPC, ISRC, credits, cover). If Tidal rotates the token, update the `TOKEN` const
 capture the live player's bearer). Cover art comes from **`resources.tidal.com`** (also
 CORS-open). The **only** cross-origin call is the MusicBrainz barcode→MBID lookup for
 MagicISRC (`GM_xmlhttpRequest` + the required descriptive User-Agent → `@connect
-musicbrainz.org`), made **only on an explicit click**.
+musicbrainz.org`), made **only on an explicit click**. The UPC is normalised to a
+bare digit string (`normaliseGtin`) before it's used in the Harmony URL or the
+MusicBrainz `barcode:` query.
 
 ## Security & permissions
 

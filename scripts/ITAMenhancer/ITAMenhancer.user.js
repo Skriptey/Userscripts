@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name          ITAM Enhancer
 // @namespace     https://github.com/Skriptey/Userscripts
-// @version       1.7.10
+// @version       1.7.11
 // @description   iTunes/Apple Music Enhancer — shows audio formats (album + per-track), barcodes (UPC) and per-track ISRCs with one-click copy and a MagicISRC link (resolved via a MusicBrainz barcode lookup), adds inline album-header buttons, a Harmony cross-service lookup, cover-art download (static + animated/motion artwork), synced/word-by-word lyrics download, and per-track ISWC lookup (MusicBrainz + credits.fm) with MusicBrainz seeding — on Apple Music (music.apple.com) and Apple Music Classical (classical.music.apple.com), with a per-track Work column for classical releases.
 // @author        Skriptey
 // @license       GPL-3.0-or-later
@@ -107,7 +107,8 @@
 //         "Barcode & ISRCs" (opens the panel), "Download cover art" (static
 //         highest-res; becomes a dropdown — Static / Square / Vertical / All —
 //         when the album has motion artwork), and "Harmony ↗" (opens a Harmony
-//         cross-service release lookup for the album, pre-filled with its UPC).
+//         cross-service release lookup for the album, pre-filled with its UPC —
+//         normalised to a bare digit string first; see normaliseGtin).
 //         Motion artwork is unencrypted fMP4 over HLS: we pick a variant by the
 //         L/XL/Max resolution setting, then concatenate init + media segments to
 //         a playable .mp4 (no decrypt/transcode). "All" → a ZIP at L, or separate
@@ -133,8 +134,12 @@
 //  MBID up by the album's barcode via the MusicBrainz web service
 //  (`GET musicbrainz.org/ws/2/release?query=barcode:<upc>&fmt=json`, with the
 //  required descriptive User-Agent), then open
-//  `magicisrc.kepstin.ca/?mbid=<mbid>&isrc1=…&isrc2=…` in track order. No UPC or
-//  no MB match → a toast pointing at the Harmony button (nothing opened blank).
+//  `magicisrc.kepstin.ca/?mbid=<mbid>&isrc1=…&isrc2=…` in track order. The
+//  barcode is normalised to a bare digit string before the query (see
+//  normaliseGtin) — amp-api's UPC is usually clean, but a formatted or
+//  non-GTIN-length value would otherwise never match, or send an unmatchable
+//  query. No UPC, no plausible GTIN, or no MB match → a toast pointing at the
+//  Harmony button (nothing opened blank).
 //     A floating "ITAM ▾" launcher is always present as a fallback (Apple's DOM
 //     classes are hashed/volatile, so the panel is the reliable surface). Apple
 //     Music is a single-page app, so a route observer re-runs the header logic on
@@ -168,8 +173,10 @@
 
   // Harmony (https://harmony.pulsewidth.org.uk) cross-service release lookup. The
   // album page URL is passed as `url=` and we pre-fill `gtin=` with the album's
-  // UPC for a stronger match; each provider listed below is pre-selected (a param
-  // being present selects that service). Bandcamp/mora/OTOTOY are left off.
+  // UPC (normalised to a bare digit string first — see normaliseGtin; amp-api's
+  // UPC is usually clean, but Harmony hard-errors on anything non-numeric) for a
+  // stronger match; each provider listed below is pre-selected (a param being
+  // present selects that service). Bandcamp/mora/OTOTOY are left off.
   const HARMONY_BASE = 'https://harmony.pulsewidth.org.uk';
   const HARMONY_PROVIDERS = [
     'musicbrainz',
@@ -395,13 +402,82 @@
     return false;
   }
 
+  /**
+   * Normalise a human-formatted barcode into the bare digit string ("GTIN")
+   * that machine consumers accept, or '' when the value cannot plausibly be one.
+   *
+   * WHY THIS EXISTS: amp-api's `attributes.upc` is USUALLY clean digits, but
+   * that is not guaranteed by the API contract — and a formatted or junk value
+   * would otherwise reach two machine consumers verbatim: Harmony's /release
+   * endpoint validates ?gtin= with /^\d+$/ plus a length gate of {8, 12, 13, 14}
+   * and hard-errors on anything else ("GTIN '…' contains invalid non-numeric
+   * characters") — it only .trim()s the value, it never strips interior spaces
+   * or hyphens (verified in kellnerd/harmony utils/gtin.ts + server/state.ts).
+   * Likewise MusicBrainz's Lucene `barcode:` search only matches the bare digit
+   * string. So before a barcode leaves this script for a machine consumer we:
+   *
+   *   1. map fullwidth digits (U+FF10–U+FF19, seen on Japanese releases) to
+   *      ASCII;
+   *   2. bail out to '' if any OTHER Unicode decimal-digit family (Arabic-Indic,
+   *      Devanagari, …) is still present — stripping those with the ASCII-only
+   *      filter in step 3 would silently DROP them, which could shorten the
+   *      string into a WRONG value that still happens to pass the length gate;
+   *      we would rather send nothing than a wrong barcode;
+   *   3. strip every remaining non-ASCII-digit character: spaces, hyphens,
+   *      dots, NBSP U+00A0, narrow NBSP U+202F, figure space U+2007, tabs, '>'
+   *      scanner arrows … everything;
+   *   4. length-gate to the valid GTIN lengths {8, 12, 13, 14} (EAN-8, UPC-A,
+   *      EAN-13, GTIN-14). Anything else — a catalogue number, "none" (no
+   *      digits), or two barcodes mashed into one field — returns '' so
+   *      callers send NOTHING rather than junk (Harmony treats an empty/absent
+   *      gtin as harmless and still does the URL-based lookup). NOTE this same
+   *      gate also applies below the MusicBrainz barcode query: MusicBrainz's
+   *      barcode field is digits-only but NOT length-restricted, so a clean
+   *      but non-GTIN-length numeric barcode (rare) will no longer be queried —
+   *      a deliberate trade-off for one uniform, easily-reasoned-about helper
+   *      rather than a Harmony-only gate.
+   *
+   * Leading zeros are preserved (string ops only, never Number()): Harmony
+   * accepts a UPC-12 as-is and a zero-padded EAN-13 equally, but an 11-digit
+   * string with a lost leading zero would be rejected. We deliberately do NOT
+   * validate the check digit: a mistyped source barcode with a valid length
+   * should reach Harmony verbatim so the user sees its precise "Checksum of
+   * GTIN '…' is invalid" feedback instead of a silent no-op here.
+   *
+   * NOTE: intentionally NOT applied to the panel display, the "Copy barcode"
+   * button, or the "copy as JSON" export — those keep the raw amp-api value
+   * (fidelity to what the page/API shows); normalisation happens only where
+   * the value flows out to a machine consumer (Harmony URL, MusicBrainz
+   * barcode query).
+   *
+   * @param {string|number|null|undefined} value - Raw barcode/UPC/GTIN as
+   *   returned by amp-api (may be human-formatted or junk).
+   * @returns {string} Bare ASCII digits of a plausible GTIN, or '' if none.
+   */
+  function normaliseGtin(value) {
+    if (value === null || value === undefined) return '';
+    // 1. fullwidth digits → ASCII (fixed charcode offset 0xFEE0)
+    const mapped = String(value).replace(/[０-９]/g, (d) =>
+      String.fromCharCode(d.charCodeAt(0) - 0xfee0),
+    );
+    // 2. any OTHER Unicode decimal-digit family left after the fullwidth
+    //    mapping would be silently dropped by the ASCII-only strip below —
+    //    bail out rather than risk a truncated-but-valid-length wrong code.
+    if (/\p{Nd}/u.test(mapped.replace(/[0-9]/g, ''))) return '';
+    // 3. drop everything that is not an ASCII digit
+    const digits = mapped.replace(/[^0-9]/g, '');
+    // 4. only plausible GTIN lengths pass (EAN-8 / UPC-A / EAN-13 / GTIN-14)
+    return [8, 12, 13, 14].includes(digits.length) ? digits : '';
+  }
+
   /** Build a Harmony release-lookup URL for an Apple Music album page, with our
    *  default providers pre-selected and the UPC pre-filled when known. (Each
-   *  present query param selects that provider in Harmony.) */
+   *  present query param selects that provider in Harmony.) The UPC is
+   *  normalised to a bare digit string first — see normaliseGtin. */
   function buildHarmonyUrl(appleUrl, gtin) {
     const p = new URLSearchParams();
     p.set('url', appleUrl);
-    p.set('gtin', gtin || '');
+    p.set('gtin', normaliseGtin(gtin));
     p.set('region', '');
     for (const provider of HARMONY_PROVIDERS) p.set(provider, '');
     return `${HARMONY_BASE}/release?${p.toString()}`;
@@ -441,12 +517,20 @@
   // GM_info gives the live @version so the UA stays in step with the script.
   const MB_USER_AGENT = `ITAMEnhancer/${(typeof GM_info !== 'undefined' && GM_info?.script?.version) || '1.4.0'} (https://github.com/Skriptey/Userscripts)`;
 
-  /** Look up a MusicBrainz release MBID by barcode (UPC). Resolves to the MBID
-   *  string (preferring an Official release), or null when there are no matches.
+  /** Look up a MusicBrainz release MBID by barcode (UPC). The barcode is
+   *  normalised to a bare digit string first (see normaliseGtin) — amp-api's
+   *  UPC is usually clean already, but a formatted/junk value would otherwise
+   *  produce an unmatchable Lucene query (e.g. a spaced barcode tokenises
+   *  instead of matching literally). A value that doesn't normalise to a
+   *  plausible GTIN resolves to null WITHOUT a network round-trip — same
+   *  outcome as "no MB match" for callers. Resolves to the MBID string
+   *  (preferring an Official release), or null when there are no matches.
    *  GM_xmlhttpRequest sets the descriptive User-Agent cross-origin where the
    *  manager allows it (Tampermonkey); others fall back to their default UA,
    *  which MusicBrainz still accepts. Degrades gracefully on any failure. */
   function lookupMusicBrainzMbid(upc) {
+    upc = normaliseGtin(upc);
+    if (!upc) return Promise.resolve(null); // no plausible GTIN → same as 'no MB match'
     const url = `${MUSICBRAINZ_BASE}/release?query=barcode:${encodeURIComponent(upc)}&fmt=json`;
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -490,7 +574,10 @@
   async function submitToMagicIsrc(model) {
     const isrcs = model.tracks.map((t) => t.isrc).filter(Boolean);
     if (!isrcs.length) return; // button only shows when there are ISRCs anyway
-    if (!model.upc) {
+    // Test the NORMALISED value, not the raw one: a placeholder like "none" or
+    // a catalogue number would otherwise pass this guard and only fail later,
+    // after a doomed MusicBrainz round-trip.
+    if (!normaliseGtin(model.upc)) {
       return toast('No barcode on this release — use the Harmony button to match/add it');
     }
     toast('Looking up MusicBrainz…');

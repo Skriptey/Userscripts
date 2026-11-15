@@ -24,7 +24,9 @@ cover-art download** — via Deezer's **public, no-auth API** (no login needed).
   as JSON.
 - **Label, release date, genres, contributors.**
 - **MagicISRC** — resolves the MusicBrainz release by barcode, then opens MagicISRC.
-- **Harmony lookup** — cross-service release lookup for the Deezer album + UPC.
+- **Harmony lookup** — cross-service release lookup for the Deezer album + UPC. As of
+  v1.0.2 the UPC is normalised to a bare digit string before the Harmony/MusicBrainz
+  handoff (defensive hardening shared with the other Harmony-linked scripts).
 - **Cover-art download** — high-resolution JPEG.
 
 ## Settings

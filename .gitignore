@@ -40,6 +40,9 @@ secrets.*
 .claude/settings.local.json
 .claude/*.local.json
 
+# ── OpenAI / Codex (keep shared AGENTS.md + MEMORY.md) ──────
+.OpenAI/*.local.*
+
 # ── OS cruft ─────────────────────────────────────────────────
 .DS_Store
 .DS_Store?

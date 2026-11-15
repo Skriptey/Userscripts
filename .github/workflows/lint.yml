@@ -1,0 +1,69 @@
+name: Lint Workflows
+
+# Lints GitHub Actions workflow files with actionlint.
+#
+# Catches real workflow bugs early — undefined `needs:` jobs, malformed
+# `${{ }}` expressions, invalid `runs-on`, deprecated syntax, and genuine
+# shell errors inside `run:` blocks. Tuned to be non-disruptive: the
+# embedded shellcheck runs at `--severity=error`, so cosmetic style/info/
+# warning lint (SC2129 "group your redirects", SC2086 quoting info, …)
+# never fails the build — only genuine breakage does.
+#
+# Runs only when workflow files change, so it costs no CI minutes on
+# ordinary code pushes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+# Least-privilege: this job only reads the checked-out tree.
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-workflows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install actionlint (pinned + sha256-verified)
+        # The upstream download-actionlint.bash does NOT verify anything — it
+        # curls the release tarball and untars it. So we skip that script and
+        # fetch the release asset directly, checking it against the digest
+        # published in actionlint_1.7.12_checksums.txt before extracting.
+        # Bump VERSION and BOTH digests together when upgrading.
+        env:
+          VERSION: 1.7.12
+          SHA256_X64: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHA256_ARM64: 325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) ARCH=amd64; WANT="$SHA256_X64" ;;
+            aarch64 | arm64) ARCH=arm64; WANT="$SHA256_ARM64" ;;
+            *) echo "unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          TARBALL="actionlint_${VERSION}_linux_${ARCH}.tar.gz"
+          curl -fsSL -o "$TARBALL" \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${TARBALL}"
+          echo "${WANT}  ${TARBALL}" | sha256sum -c -
+          tar -xzf "$TARBALL" actionlint
+          ./actionlint --version
+
+      - name: Lint workflow files
+        env:
+          # Suppress cosmetic shellcheck style/info/warning; fail only on
+          # genuine errors (plus all of actionlint's own native checks).
+          SHELLCHECK_OPTS: --severity=error
+        run: ./actionlint -color
